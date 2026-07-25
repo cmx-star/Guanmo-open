@@ -10,7 +10,6 @@ import remarkGfm from 'remark-gfm'
 import mascotIdle from '@/assets/ai-mascot/mascot-idle.png'
 import mascotStreaming from '@/assets/ai-mascot/mascot-streaming.gif'
 import { PromptComposer } from '@/components/ai/PromptComposer'
-import type { ManualCapability } from '@/components/ai/ManualToolToggle'
 import { readRememberedFile } from '@/services/persistedFileAccess'
 import { useEditorStore } from '@/stores/editorStore'
 import { deleteChatSession } from '@/services/database/persistence'
@@ -51,7 +50,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const streamScrollInterruptedRef = useRef(false)
   const pendingOutgoingMessageCountRef = useRef<number | null>(null)
   const visibleMessages = useMemo(() => messages.filter((msg) => !msg.hidden), [messages])
-  const [manualCapabilities, setManualCapabilities] = useState<ManualCapability[]>([])
+  const [reasoningMode, setReasoningMode] = useState<'off' | 'on'>('off')
   const [resetManualToggle, setResetManualToggle] = useState(0)
 
   // 检测是否在底部（距离底部 50px 以内视为底部）
@@ -172,13 +171,13 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     pendingOutgoingMessageCountRef.current = chatState.messages.filter((msg) => !msg.hidden).length
     streamingMessageIdRef.current = null
     streamingStartScrollTopRef.current = 0
-    sendMessage(currentDraft, undefined, currentContextTags.length > 0 ? currentContextTags : undefined, manualCapabilities)
+    sendMessage(currentDraft, undefined, currentContextTags.length > 0 ? currentContextTags : undefined, undefined, reasoningMode)
     setDraftInput('')
     chatState.clearContextTags()
-    // 重置手动工具开关
-    setManualCapabilities([])
+    // 重置深度思考开关
+    setReasoningMode('off')
     setResetManualToggle((prev) => prev + 1)
-  }, [manualCapabilities, sendMessage, setDraftInput])
+  }, [reasoningMode, sendMessage, setDraftInput])
 
   useEffect(() => {
     window.addEventListener(AI_SHORTCUT_SUBMIT_EVENT, handleSend)
@@ -410,7 +409,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
         onSend={handleSend}
         streaming={streaming}
         onCancel={cancelStream}
-        onManualCapabilitiesChange={setManualCapabilities}
+        onReasoningModeChange={setReasoningMode}
         resetManualToggle={resetManualToggle}
       />
     </div>

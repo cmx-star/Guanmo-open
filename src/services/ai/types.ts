@@ -130,6 +130,8 @@ export interface ChatRequest {
   signal?: AbortSignal
   tools?: ChatTool[]
   toolChoice?: 'auto' | 'none'
+  /** 深度思考模式：'off' 关闭 | 'on' 开启 */
+  reasoningMode?: 'off' | 'on'
 }
 
 export interface ChatResponse {
