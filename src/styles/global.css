@@ -1470,6 +1470,37 @@ body {
   background: var(--gm-markdown-quote-bg);
 }
 
+.gm-markdown-preview details {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--gm-border);
+  border-radius: 0.75rem;
+  background: var(--gm-surface);
+}
+
+.gm-markdown-preview summary {
+  color: var(--gm-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gm-markdown-preview kbd {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--gm-border);
+  border-radius: 0.3rem;
+  color: var(--gm-text);
+  background: var(--gm-surface-elevated);
+  box-shadow: 0 1px 0 var(--gm-border);
+  font-family: inherit;
+  font-size: 0.85em;
+}
+
+.gm-markdown-preview [align='center'] > .gm-markdown-image {
+  width: fit-content;
+  margin-right: auto;
+  margin-left: auto;
+}
+
 .gm-markdown-block {
   min-width: 0;
 }
