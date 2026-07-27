@@ -13,6 +13,7 @@ import {
   saveSecret,
 } from '@/services/secureStorage'
 import { toast } from '@/services/toast'
+import { cancelPendingIndexTimers, getPendingIndexTimerPaths } from '@/services/rag/indexer'
 
 interface EditorSettings {
   fontSize: number
@@ -41,11 +42,16 @@ interface AppearanceSettings {
 type AppearanceTheme = AppearanceSettings['theme']
 type LightPalette = AppearanceSettings['lightPalette']
 
+interface KnowledgeSettings {
+  autoIndexEnabled: boolean
+}
+
 interface SettingsState {
   ai: AiConfig
   editor: EditorSettings
   appearance: AppearanceSettings
   webSearch: WebSearchConfig
+  knowledge: KnowledgeSettings
   customChatPresets: CustomPreset[]
   customEmbeddingPresets: CustomPreset[]
 
@@ -54,6 +60,7 @@ interface SettingsState {
   updateEditorSettings: (settings: Partial<EditorSettings>) => void
   updateAppearanceSettings: (settings: Partial<AppearanceSettings>) => void
   updateWebSearchConfig: (config: Partial<WebSearchConfig>) => void
+  updateKnowledgeSettings: (settings: Partial<KnowledgeSettings>) => void
   addCustomChatPreset: (preset: CustomPreset) => void
   removeCustomChatPreset: (id: string) => void
   addCustomEmbeddingPreset: (preset: CustomPreset) => void
@@ -98,6 +105,10 @@ const DEFAULT_WEB_SEARCH: WebSearchConfig = {
   customUrl: '',
 }
 
+const DEFAULT_KNOWLEDGE_SETTINGS: KnowledgeSettings = {
+  autoIndexEnabled: true,
+}
+
 const THEME_SWITCH_THROTTLE_MS = 180
 let lastThemeSwitchAt = 0
 
@@ -115,6 +126,7 @@ export const useSettingsStore = create<SettingsState>()(
       editor: DEFAULT_EDITOR_SETTINGS,
       appearance: DEFAULT_APPEARANCE_SETTINGS,
       webSearch: DEFAULT_WEB_SEARCH,
+      knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
       customChatPresets: [],
       customEmbeddingPresets: [],
 
@@ -142,6 +154,13 @@ export const useSettingsStore = create<SettingsState>()(
 
       updateEditorSettings: (settings) =>
         set((s) => ({ editor: { ...s.editor, ...settings } })),
+
+      updateKnowledgeSettings: (settings) => {
+        set((s) => ({ knowledge: { ...s.knowledge, ...settings } }))
+        if (settings.autoIndexEnabled === false) {
+          cancelPendingIndexTimers(getPendingIndexTimerPaths())
+        }
+      },
 
       updateAppearanceSettings: (settings) =>
         set((s) => {
@@ -302,6 +321,10 @@ export const useSettingsStore = create<SettingsState>()(
             ...current.webSearch,
             ...saved.webSearch,
             apiKey: '',
+          },
+          knowledge: {
+            ...current.knowledge,
+            ...(saved.knowledge || {}),
           },
         }
       },

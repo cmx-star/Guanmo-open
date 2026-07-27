@@ -910,6 +910,23 @@ body {
   animation: gmReleaseModalDialogOut 160ms ease-in forwards;
 }
 
+/* Knowledge base manager modal */
+.gm-kb-modal-scrim {
+  animation: gmReleaseModalScrimIn 180ms ease-out;
+}
+
+.gm-kb-modal-dialog {
+  animation: gmReleaseModalDialogIn 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gm-kb-modal-scrim[data-closing='true'] {
+  animation: gmReleaseModalScrimOut 140ms ease-in forwards;
+}
+
+.gm-kb-modal-scrim[data-closing='true'] .gm-kb-modal-dialog {
+  animation: gmReleaseModalDialogOut 160ms ease-in forwards;
+}
+
 .animate-float {
   animation: float 3s ease-in-out infinite;
 }
@@ -918,7 +935,9 @@ body {
   .gm-release-modal-scrim,
   .gm-release-modal-dialog,
   .gm-legacy-modal-scrim,
-  .gm-legacy-modal-dialog {
+  .gm-legacy-modal-dialog,
+  .gm-kb-modal-scrim,
+  .gm-kb-modal-dialog {
     animation: none;
   }
 }
