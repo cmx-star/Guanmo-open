@@ -49,6 +49,8 @@ import { useUpdateStore } from '@/stores/updateStore'
 import { listAuthorizedApiOrigins, revokeApiOrigin, type AuthorizedApiOrigin } from '@/services/externalHttp'
 import { LegacyMigrationEntry } from '@/components/legacy/LegacyMigrationEntry'
 
+const AI_ROUTING_GUIDE_URL = 'https://github.com/we-used-to-be/Guanmo-open/blob/main/docs/AI_ROUTING_GUIDE.md'
+
 async function openUrl(url: string, external: boolean) {
   if (external) {
     try {
@@ -581,6 +583,16 @@ function AiSettings() {
           </p>
         </div>
       )}
+      <SettingField label="AI 使用指南" description="查看能力路由关键词和提问示例">
+        <Button
+          type="default"
+          size="small"
+          onClick={() => void openUrl(AI_ROUTING_GUIDE_URL, isTauri())}
+        >
+          查看指南
+        </Button>
+      </SettingField>
+
       <SectionTitle>对话 API 配置</SectionTitle>
       <SettingField label="协议类型" description="决定请求格式，大部分服务选择 OpenAI Chat Completions">
         <Select

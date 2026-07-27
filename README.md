@@ -194,6 +194,8 @@ VITE_GUANMO_WEB_SEARCH_API_KEY_SECRET=guanmo.web-search.api-key
 
 完整的安装、配置与功能使用指南请查阅 **[观墨使用说明书](docs/USER_GUIDE.md)**，涵盖界面总览、文件管理、编辑预览、AI 助手、知识库、长期记忆、联网搜索、外观设置、快捷键和常见问题等内容。
 
+想快速了解如何触发知识库、文件、选区、长期记忆和联网搜索等 AI 能力，请查看 **[AI 使用指南](docs/AI_ROUTING_GUIDE.md)**。
+
 ---
 
 ## 🛠️ 技术栈 · Tech Stack
