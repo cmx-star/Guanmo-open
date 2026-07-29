@@ -49,6 +49,7 @@ import { useUpdateStore } from '@/stores/updateStore'
 import { listAuthorizedApiOrigins, revokeApiOrigin, type AuthorizedApiOrigin } from '@/services/externalHttp'
 import { LegacyMigrationEntry } from '@/components/legacy/LegacyMigrationEntry'
 import { KnowledgeBaseManager } from '@/features/settings/KnowledgeBaseManager'
+import { AiShortcutSettings } from '@/features/settings/AiShortcutSettings'
 
 const AI_ROUTING_GUIDE_URL = 'https://github.com/we-used-to-be/Guanmo-open/blob/main/docs/AI_ROUTING_GUIDE.md'
 
@@ -69,6 +70,7 @@ const TABS_CONFIG = [
   { key: 'ai', text: 'AI 模型' },
   { key: 'editor', text: '编辑器', children: <EditorSettings /> },
   { key: 'memory', text: '记忆', children: <MemorySettings /> },
+  { key: 'ai-shortcuts', text: '快捷操作', children: <AiShortcutSettings /> },
   { key: 'shortcuts', text: '快捷键', children: <ShortcutSettings /> },
   { key: 'general', text: '通用', children: <GeneralSettings /> },
 ]
@@ -1207,7 +1209,15 @@ function ShortcutSettings() {
 }
 
 function GeneralSettings() {
-  const { appearance, updateAiConfig, updateEmbeddingConfig, updateEditorSettings, updateAppearanceSettings, updateWebSearchConfig } = useSettingsStore()
+  const {
+    appearance,
+    updateAiConfig,
+    updateEmbeddingConfig,
+    updateEditorSettings,
+    updateAppearanceSettings,
+    updateWebSearchConfig,
+    resetAiShortcutActions,
+  } = useSettingsStore()
   const [busy, setBusy] = useState(false)
   const [currentVersion, setCurrentVersion] = useState('—')
   const [loadingReleaseNotes, setLoadingReleaseNotes] = useState(false)
@@ -1296,6 +1306,7 @@ function GeneralSettings() {
     })
     updateAppearanceSettings({ customCursorEnabled: true, aiMascotAvatarEnabled: false, theme: 'light', lightPalette: 'warm' })
     updateWebSearchConfig({ provider: 'duckduckgo', apiKey: '', maxResults: 5, customUrl: '' })
+    resetAiShortcutActions()
     toast.success('已恢复默认设置')
   }
 

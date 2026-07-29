@@ -1165,6 +1165,32 @@ body {
   backdrop-filter: blur(2px);
 }
 
+.gm-ai-shortcut-dialog-mask {
+  animation: gmAiShortcutDialogFadeIn 160ms ease-out both;
+}
+
+.gm-ai-shortcut-dialog-mask.is-closing {
+  animation: gmAiShortcutDialogFadeOut 160ms ease-in both;
+}
+
+.gm-ai-shortcut-dialog-panel {
+  animation: gmAiShortcutDialogFadeIn 160ms ease-out both;
+}
+
+.gm-ai-shortcut-dialog-panel.is-closing {
+  animation: gmAiShortcutDialogFadeOut 160ms ease-in both;
+}
+
+@keyframes gmAiShortcutDialogFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes gmAiShortcutDialogFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 .gm-settings-modal > div {
   clip-path: none !important;
   border: 1px solid var(--gm-settings-modal-border);

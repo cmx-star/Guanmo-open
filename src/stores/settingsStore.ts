@@ -14,6 +14,11 @@ import {
 } from '@/services/secureStorage'
 import { toast } from '@/services/toast'
 import { cancelPendingIndexTimers, getPendingIndexTimerPaths } from '@/services/rag/indexer'
+import {
+  createDefaultAiShortcutActions,
+  normalizeAiShortcutActions,
+  type AiShortcutAction,
+} from '@/services/aiShortcutActions'
 
 interface EditorSettings {
   fontSize: number
@@ -52,6 +57,7 @@ interface SettingsState {
   appearance: AppearanceSettings
   webSearch: WebSearchConfig
   knowledge: KnowledgeSettings
+  aiShortcutActions: AiShortcutAction[]
   customChatPresets: CustomPreset[]
   customEmbeddingPresets: CustomPreset[]
 
@@ -61,6 +67,8 @@ interface SettingsState {
   updateAppearanceSettings: (settings: Partial<AppearanceSettings>) => void
   updateWebSearchConfig: (config: Partial<WebSearchConfig>) => void
   updateKnowledgeSettings: (settings: Partial<KnowledgeSettings>) => void
+  setAiShortcutActions: (actions: AiShortcutAction[]) => void
+  resetAiShortcutActions: () => void
   addCustomChatPreset: (preset: CustomPreset) => void
   removeCustomChatPreset: (id: string) => void
   addCustomEmbeddingPreset: (preset: CustomPreset) => void
@@ -127,6 +135,7 @@ export const useSettingsStore = create<SettingsState>()(
       appearance: DEFAULT_APPEARANCE_SETTINGS,
       webSearch: DEFAULT_WEB_SEARCH,
       knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
+      aiShortcutActions: createDefaultAiShortcutActions(),
       customChatPresets: [],
       customEmbeddingPresets: [],
 
@@ -161,6 +170,12 @@ export const useSettingsStore = create<SettingsState>()(
           cancelPendingIndexTimers(getPendingIndexTimerPaths())
         }
       },
+
+      setAiShortcutActions: (actions) =>
+        set({ aiShortcutActions: actions.map((action) => ({ ...action })) }),
+
+      resetAiShortcutActions: () =>
+        set({ aiShortcutActions: createDefaultAiShortcutActions() }),
 
       updateAppearanceSettings: (settings) =>
         set((s) => {
@@ -326,6 +341,9 @@ export const useSettingsStore = create<SettingsState>()(
             ...current.knowledge,
             ...(saved.knowledge || {}),
           },
+          aiShortcutActions: Object.prototype.hasOwnProperty.call(saved, 'aiShortcutActions')
+            ? normalizeAiShortcutActions(saved.aiShortcutActions)
+            : current.aiShortcutActions,
         }
       },
     }
