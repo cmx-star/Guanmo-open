@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentProgressStage, AgentStep, AgentResult, AgentRunRequest } from './types'
+import type { AgentConfig, AgentProgressStage, AgentStep, AgentResult, AgentRunRequest, RoutingDecision } from './types'
 import type { ChatMessage, ChatMessageSource } from '@/services/ai/types'
 import { getAiClient, isAiReady } from '@/services/ai/aiClient'
 import { getAllTools, getTool, getToolDescriptions, getToolsForLLM } from './toolRegistry'
@@ -27,6 +27,11 @@ import {
 } from './toolSelector'
 import { getAgentScopeContext } from '@/services/aiScope'
 import { BASE_SYSTEM_PROMPT, CONTEXT_SAFETY_PROMPT, CUSTOM_PROMPT_POLICY, buildUntrustedContextMessage } from '@/services/ai/systemPrompts'
+import {
+  FILE_SUMMARY_ANSWER_PROMPT,
+  LOCAL_RESEARCH_ANSWER_PROMPT,
+  WEB_COMPARISON_ANSWER_PROMPT,
+} from './answerInstructions'
 
 let toolsRegistered = false
 
@@ -147,52 +152,6 @@ function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text
   return text.slice(0, maxLen) + `\n... (已截断，共 ${text.length} 字符)`
 }
-
-const LOCAL_RESEARCH_ANSWER_PROMPT = `本轮是本地阅读研究问题。必须基于已调用的本地资料工具结果回答，不能接 Web 搜索，不能编造未检索到的资料。
-
-回答结构必须包含：
-1. 结论摘要
-2. 主要依据
-3. 来源列表
-4. 推断部分
-5. 信息不足 / 需要补充的资料
-
-要求：
-- 每条关键结论都要能回到本地来源；来源至少写出文件名、标题路径或 heading、行号范围。
-- 多个来源冲突、片段不足或覆盖不完整时，必须明确说明冲突或缺口，不能强行下结论。
-- “推断部分”只能写从来源合理推出的内容，并标明它不是原文直接结论。
-- 如果 search_knowledge 返回空结果或只有弱相关片段，回答重点应是信息缺口，不要套用确定性结论。`
-
-const WEB_COMPARISON_ANSWER_PROMPT = `本轮是“Web + 本地资料对照”问题。必须区分本地知识库结果与 Web 搜索结果，不得把 Web 结果写成本地资料事实，也不得把本地片段当作最新外部事实。
-回答结构优先包含：
-1. 本地资料结论
-2. Web 资料结论
-3. 一致点
-4. 冲突点
-5. 补充点
-6. 无法确认 / 仍需人工判断
-
-要求：
-- 本地来源写出文件名、标题路径或 heading、行号范围。
-- Web 来源写出标题、URL、站点名或发布日期（如有）。
-- 如果本地资料为空但 Web 有结果，明确说明“未找到本地依据，仅基于外部资料”。
-- 如果 Web 搜索关闭、未配置、失败或为空，降级为本地研究回答，并明确说明未完成外部对照。
-- 多个来源冲突或覆盖不完整时，只能说明冲突、缺口和可推断范围，不能强行下结论。`
-
-const FILE_SUMMARY_ANSWER_PROMPT = `本轮是单文件总结。必须优先基于 read_context_file 返回的已授权文件内容回答；只有文件读取失败或内容不足时，才可用 search_knowledge 片段补充，并明确标注范围。
-
-回答必须是结构化文件总结，不能只输出泛泛一段话。先判断文档类型，并采用对应结构：
-- 学习笔记：核心概念、重点、易错点、复习问题
-- 会议/记录：结论、待办、负责人、风险
-- 项目文档：目标、方案、接口/约束、未决问题
-- 普通文章：摘要、主要观点、关键细节、可追问方向
-
-所有类型都必须补充：
-1. 来源依据：写出文件名、heading 或标题路径、行号范围；不得伪造来源。
-2. 信息缺口：内容不足、读取失败、截断、缺少负责人/接口/结论等都要明确说明。
-3. 后续操作建议：只给可追问或可继续阅读的建议，不要自动写回文档、保存记忆或更新知识库。
-
-如果 read_context_file 返回内容被截断，不得声称已覆盖全文；必须说明“当前总结基于已读取范围”。`
 
 function buildFinalAnswerMessages(messages: ChatMessage[], finalInstruction?: string): ChatMessage[] {
   return [
@@ -548,6 +507,7 @@ export async function runAgent({
   untrustedContext,
   customPreferencePrompt,
   streamEnabled = true,
+  routingDecision,
 }: AgentRunRequest): Promise<AgentResult> {
   initAgent()
 
@@ -564,45 +524,65 @@ export async function runAgent({
   const client = getAiClient()
   const userIntent = rawQuery || query
 
-  // 构建应用上下文
-  const appContext: AppContext = {
+  // 使用统一路由决策或回退到旧逻辑
+  const rd: RoutingDecision | undefined = routingDecision
+
+  // 回退时构建 appContext 和 intentResult（仅当 rd 不存在时使用）
+  const fallbackAppContext = (): AppContext => ({
     hasRecentEdit: hasRecentEditContext,
     hasOpenFile: hasCurrentEditTarget,
     hasSelection: Boolean(getAgentScopeContext()?.contextTags.some((tag) => tag.type === 'selection')),
     hasContextTags: currentEditTargetCount > 0,
-  }
+  })
 
-  // 意图检测
-  const intentResult = detectIntentScores(userIntent, appContext)
-  const isDocumentRewrite = isDocumentRewriteIntent(userIntent)
-  const isWebComparison = isWebComparisonIntent(userIntent)
-  const isLocalResearch = !isWebComparison && isLocalResearchIntent(userIntent)
-  const isFileSummary = !isWebComparison && isFileSummaryIntent(userIntent, appContext)
-  const answerInstruction = isWebComparison
-    ? WEB_COMPARISON_ANSWER_PROMPT
-    : isFileSummary ? FILE_SUMMARY_ANSWER_PROMPT
-    : isLocalResearch ? LOCAL_RESEARCH_ANSWER_PROMPT : undefined
+  // 意图检测 — 优先使用统一路由决策
+  const isDocumentRewrite = rd?.isDocumentRewrite ?? isDocumentRewriteIntent(userIntent)
+  const isWebComparison = rd?.isWebComparison ?? isWebComparisonIntent(userIntent)
+  const isLocalResearch = rd?.isLocalResearch ?? (!isWebComparison && isLocalResearchIntent(userIntent))
+  const isFileSummary = rd?.isFileSummary ?? (!isWebComparison && isFileSummaryIntent(userIntent, fallbackAppContext()))
+  const answerInstruction = rd?.answerInstruction ?? (
+    isWebComparison
+      ? WEB_COMPARISON_ANSWER_PROMPT
+      : isFileSummary ? FILE_SUMMARY_ANSWER_PROMPT
+      : isLocalResearch ? LOCAL_RESEARCH_ANSWER_PROMPT : undefined
+  )
 
   // 合并外部传入的 requiredCapabilities
-  const mergedRequired = requiredCapabilities && requiredCapabilities.length > 0
-    ? Array.from(new Set([...requiredCapabilities, ...intentResult.required]))
-    : intentResult.required
+  const mergedRequired = rd
+    ? (requiredCapabilities && requiredCapabilities.length > 0
+      ? Array.from(new Set([...requiredCapabilities, ...rd.required]))
+      : rd.required)
+    : (() => {
+        const intentResult = detectIntentScores(userIntent, fallbackAppContext())
+        return requiredCapabilities && requiredCapabilities.length > 0
+          ? Array.from(new Set([...requiredCapabilities, ...intentResult.required]))
+          : intentResult.required
+      })()
 
-  // 构建候选工具
-  const candidateTools = candidateToolNames && candidateToolNames.length > 0
-    ? [...candidateToolNames] as AgentToolName[]
-    : buildCandidateTools(intentResult.candidates)
-  if (
-    isDocumentRewrite
-    && appContext.hasSelection
-    && intentResult.candidates.includes('selection_context')
-    && !candidateTools.includes('read_selection_context')
-  ) {
-    candidateTools.unshift('read_selection_context')
+  // 构建候选工具 — 优先使用统一路由决策
+  const candidateTools = rd
+    ? rd.candidateTools
+    : (candidateToolNames && candidateToolNames.length > 0
+      ? [...candidateToolNames] as AgentToolName[]
+      : buildCandidateTools(detectIntentScores(userIntent, fallbackAppContext()).candidates))
+
+  // 工具列表调整（rd 已包含调整，回退时需手动调整）
+  if (!rd) {
+    const fbCtx = fallbackAppContext()
+    const fbIntent = detectIntentScores(userIntent, fbCtx)
+    if (
+      isDocumentRewrite
+      && fbCtx.hasSelection
+      && fbIntent.candidates.includes('selection_context')
+      && !candidateTools.includes('read_selection_context')
+    ) {
+      candidateTools.unshift('read_selection_context')
+    }
+    if (isFileSummary && !candidateTools.includes('read_context_file')) {
+      candidateTools.unshift('read_context_file')
+    }
   }
-  if (isFileSummary && !candidateTools.includes('read_context_file')) {
-    candidateTools.unshift('read_context_file')
-  }
+
   if (isDocumentRewrite && currentEditTargetCount === 0) {
     return {
       answer: '本轮没有可修改的 selection 或 file 标签。请重新框选要改写的文本，或把要整体改写的文件添加为 tag 后再发起请求。',
@@ -612,10 +592,12 @@ export async function runAgent({
     }
   }
 
-  // 判断是否需要编辑确认
-  const requiresEditConfirmation = hasCurrentEditTarget && (
-    intentResult.candidates.includes('file_write')
-    || (hasRecentEditContext && isImplicitEditContinuation(userIntent))
+  // 判断是否需要编辑确认 — 优先使用统一路由决策
+  const requiresEditConfirmation = rd?.requiresEditConfirmation ?? (
+    hasCurrentEditTarget && (
+      detectIntentScores(userIntent, fallbackAppContext()).candidates.includes('file_write')
+      || (hasRecentEditContext && isImplicitEditContinuation(userIntent))
+    )
   )
 
   if (requiresEditConfirmation && currentEditTargetCount > 1) {

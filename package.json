@@ -33,6 +33,7 @@
         "build": "tsc -b && vite build --mode web && node scripts/bundle-budget-check.mjs --mode web",
         "build:desktop": "tsc -b && vite build --mode desktop && node scripts/bundle-budget-check.mjs --mode desktop",
         "test:agent-parser": "node scripts/run-agent-parser-check.mjs",
+        "test:routing-matrix": "vitest run tests/agent/routingMatrix.test.ts",
         "test:memory": "node scripts/run-memory-policy-check.mjs",
         "test:memory-query": "node scripts/run-memory-query-check.mjs",
         "test:app-warmup": "node scripts/run-app-warmup-check.mjs",

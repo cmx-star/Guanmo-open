@@ -340,14 +340,59 @@ export function detectIntentScores(
 }
 
 /**
- * 判断是否应该使用 Agent 模式
+ * 判断是否应该使用 Agent 模式（收紧弱信号）。
+ *
+ * 规则：
+ * - 无候选能力 → direct
+ * - 有强信号（strong keyword / regex / classifier / context）→ agent
+ * - 多个不同能力的弱信号（≥2 个不同 capability）→ agent
+ * - 单一弱关键词 → direct（这是收紧的核心）
  */
 export function shouldUseAgentMode(
   query: string,
   context: AppContext = {}
 ): boolean {
   const result = detectIntentScores(query, context)
-  return result.candidates.length > 0
+  if (result.candidates.length === 0) return false
+
+  // 有强依赖能力（score >= 4）→ agent
+  if (result.required.length > 0) return true
+
+  // 单一弱词（不含空格）不应被 regex 视为强信号
+  const isSingleWeakWord = !query.trim().includes(' ')
+
+  // 有非弱信号（strong / classifier / context，以及非单一弱词的 regex）→ agent
+  const hasStrongSignal = result.scores.some((s) =>
+    s.signals.some(
+      (sig) => {
+        if (sig.startsWith('strong:') || sig.startsWith('classifier:') || sig.startsWith('context:')) {
+          return true
+        }
+        // regex 信号：单一弱词不视为强信号
+        if (sig.startsWith('regex:') && !isSingleWeakWord) {
+          return true
+        }
+        return false
+      },
+    ),
+  )
+  if (hasStrongSignal) return true
+
+  // 多个不同弱关键词（≥2 个不同的弱关键词）→ agent
+  const weakKeywords = new Set<string>()
+  for (const s of result.scores) {
+    if (s.score > 0 && !s.isRequired) {
+      for (const sig of s.signals) {
+        if (sig.startsWith('weak:')) {
+          weakKeywords.add(sig.slice(5))
+        }
+      }
+    }
+  }
+  if (weakKeywords.size >= 2) return true
+
+  // 单一弱关键词 → direct
+  return false
 }
 
 /**
