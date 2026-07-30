@@ -526,15 +526,16 @@ export const MarkdownPreview = memo(function MarkdownPreview({
             <em className="text-gm-text italic">{children}</em>
           ),
           code: ({ children, className, node }) => {
+            const code = String(children)
             const language = className?.match(/language-([\w-]+)/)?.[1]
-            const isBlock = Boolean(language)
+            const isBlock = Boolean(language) || code.endsWith('\n')
             if (isBlock && language === 'mermaid') {
-              return <MermaidBlock code={String(children).replace(/\n$/, '')} startLine={getNodeStartLine(node)} endLine={getNodeEndLine(node)} />
+              return <MermaidBlock code={code.replace(/\n$/, '')} startLine={getNodeStartLine(node)} endLine={getNodeEndLine(node)} />
             }
             if (isBlock) {
               return (
-                <CodeBlock code={String(children).replace(/\n$/, '')} language={language} fontSize={fontSize} startLine={getNodeStartLine(node)} endLine={getNodeEndLine(node)}>
-                  {className && (
+                <CodeBlock code={code.replace(/\n$/, '')} language={language} fontSize={fontSize} startLine={getNodeStartLine(node)} endLine={getNodeEndLine(node)}>
+                  {language && (
                     <div className="px-4 py-1.5 border-b border-gm-border text-micro text-gm-text-secondary font-mono">
                       {language}
                     </div>

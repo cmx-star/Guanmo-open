@@ -108,6 +108,18 @@ function StatefulDelayedPreview({ onCommit }: { onCommit: () => void }) {
 }
 
 describe('MarkdownPreview 预览内源码编辑', () => {
+  it('有无语言标识的围栏代码块使用同款代码框', () => {
+    const { container } = renderPreview({
+      content: '```\nplain text\n```\n\n```txt\nlabeled text\n```',
+    })
+    const codeBlocks = container.querySelectorAll('.gm-code-block')
+
+    expect(codeBlocks).toHaveLength(2)
+    expect(codeBlocks[0]).toHaveTextContent('plain text')
+    expect(codeBlocks[1]).toHaveTextContent('txt')
+    expect(codeBlocks[1]).toHaveTextContent('labeled text')
+  })
+
   it('Front Matter 的多个渲染节点仍归属同一个源码块', () => {
     const { container } = renderPreview({ content: '---\ntitle: 示例\n---\n\n正文' })
     const wrappers = container.querySelectorAll('[data-md-block-index]')

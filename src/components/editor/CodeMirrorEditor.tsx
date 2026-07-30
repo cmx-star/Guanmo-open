@@ -5,7 +5,12 @@ import { defaultKeymap, history, historyKeymap, indentWithTab, undoDepth, redoDe
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { highlightSelectionMatches } from '@codemirror/search'
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentUnit, HighlightStyle } from '@codemirror/language'
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+} from '@codemirror/autocomplete'
 import { tags } from '@lezer/highlight'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -229,11 +234,17 @@ export function CodeMirrorEditor({ content, onChange, onSave, onImageFiles, view
         highlightActiveLineGutter(),
         history(),
         bracketMatching(),
+        closeBrackets(),
         autocompletion(),
         highlightSelectionMatches(),
         syntaxHighlighting(markdownHighlightStyle),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         markdown({ base: markdownLanguage, codeLanguages: editorCodeLanguages }),
+        EditorState.languageData.of(() => [{
+          closeBrackets: {
+            brackets: ['(', '[', '{', "'", '"', '`'],
+          },
+        }]),
         indentUnit.of(' '.repeat(editorSettings.tabSize)),
         guanmoTheme,
         saveKeymap,
@@ -260,6 +271,7 @@ export function CodeMirrorEditor({ content, onChange, onSave, onImageFiles, view
           ...defaultKeymap,
           ...historyKeymap,
           ...completionKeymap,
+          ...closeBracketsKeymap,
         ]),
         keymap.of([
           { key: 'Ctrl-f', run: () => true },
