@@ -46,6 +46,7 @@ function isPendingEditResult(text: string): boolean {
 
 const DEFAULT_CONFIG: AgentConfig = {
   maxSteps: 6,
+  maxToolCalls: 8,
   stepTimeout: 30000,
   systemPrompt: `${BASE_SYSTEM_PROMPT}
 
@@ -169,6 +170,13 @@ function buildFinalAnswerMessages(messages: ChatMessage[], finalInstruction?: st
 interface ToolExecutionResult {
   result: string
   rawResult: string
+}
+
+function buildToolCallKey(name: string, args: Record<string, unknown>): string {
+  return JSON.stringify([
+    name,
+    Object.keys(args).sort().map((key) => [key, args[key]]),
+  ])
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -392,7 +400,10 @@ async function executeToolCalls(
   signal?: AbortSignal,
   selectionContextReadLevels?: Map<string, 1 | 2>,
   onProgress?: (stage: AgentProgressStage) => void,
-): Promise<Array<{ name: string; result: string; rawResult?: string; executed?: boolean }>> {
+  readResultCache?: Map<string, Promise<ToolExecutionResult>>,
+  maxNewToolCalls = Number.POSITIVE_INFINITY,
+  allowWriteBeyondBudget = false,
+): Promise<Array<{ name: string; result: string; rawResult?: string; executed?: boolean; reused?: boolean }>> {
   // 分离读取类和写入类工具
   const readCalls = toolCalls.filter(tc => isReadTool(tc.name))
   const writeCalls = toolCalls.filter(tc => isWriteTool(tc.name))
@@ -401,12 +412,35 @@ async function executeToolCalls(
 
   const regularReadCalls = readCalls.filter((call) => call.name !== 'read_selection_context')
   const selectionContextCalls = readCalls.filter((call) => call.name === 'read_selection_context')
+  let remainingNewToolCalls = maxNewToolCalls
 
   // 普通读类工具并行执行；selectionContext 需要按层级串行执行。
   if (regularReadCalls.length > 0) {
     const readResults = await Promise.allSettled(
       regularReadCalls.map(async tc => {
-        const executed = await executeTool(tc.name, tc.args, timeout, userIntent, signal, onProgress)
+        const cacheKey = buildToolCallKey(tc.name, tc.args)
+        const cached = readResultCache?.get(cacheKey)
+        if (cached) {
+          const reused = await cached
+          return {
+            name: tc.name,
+            result: reused.result,
+            rawResult: reused.rawResult,
+            executed: false,
+            reused: true,
+          }
+        }
+        if (remainingNewToolCalls <= 0) {
+          return {
+            name: tc.name,
+            result: '系统已达到本轮工具调用上限，未执行新的工具调用。请基于已有结果回答，并明确说明信息可能不完整。',
+            executed: false,
+          }
+        }
+        remainingNewToolCalls--
+        const pending = executeTool(tc.name, tc.args, timeout, userIntent, signal, onProgress)
+        readResultCache?.set(cacheKey, pending)
+        const executed = await pending
         return {
           name: tc.name,
           result: executed.result,
@@ -428,6 +462,14 @@ async function executeToolCalls(
   }
 
   for (const call of selectionContextCalls) {
+    if (remainingNewToolCalls <= 0) {
+      results.push({
+        name: call.name,
+        result: '系统已达到本轮工具调用上限，未执行新的工具调用。请基于已有结果回答，并明确说明信息可能不完整。',
+        executed: false,
+      })
+      continue
+    }
     const level: 1 | 2 = call.args.level === 2 ? 2 : 1
     const selectionTargets = getAgentScopeContext()?.editTargets?.filter((target) => target.type === 'selection') || []
     const targetId = typeof call.args.targetId === 'string'
@@ -440,6 +482,7 @@ async function executeToolCalls(
       continue
     }
 
+    remainingNewToolCalls--
     const executed = await executeTool(call.name, call.args, timeout, userIntent, signal, onProgress)
     let succeeded = false
     try {
@@ -462,8 +505,17 @@ async function executeToolCalls(
   // 写入类工具本轮只允许执行第一个，避免多个确认卡片之间出现授权范围错配。
   const firstWriteCall = writeCalls[0]
   if (firstWriteCall) {
-    const executed = await executeTool(firstWriteCall.name, firstWriteCall.args, timeout, userIntent, signal, onProgress)
-    results.push({ name: firstWriteCall.name, result: executed.result, rawResult: executed.rawResult })
+    if (remainingNewToolCalls <= 0 && !allowWriteBeyondBudget) {
+      results.push({
+        name: firstWriteCall.name,
+        result: '系统已达到本轮工具调用上限，未执行新的工具调用。请基于已有结果回答，并明确说明信息可能不完整。',
+        executed: false,
+      })
+    } else {
+      if (remainingNewToolCalls > 0) remainingNewToolCalls--
+      const executed = await executeTool(firstWriteCall.name, firstWriteCall.args, timeout, userIntent, signal, onProgress)
+      results.push({ name: firstWriteCall.name, result: executed.result, rawResult: executed.rawResult })
+    }
   }
   for (const tc of writeCalls.slice(1)) {
     results.push({
@@ -629,6 +681,7 @@ export async function runAgent({
   const knowledgeSources: ChatMessageSource[] = []
   const calledToolNames: string[] = []
   const selectionContextReadLevels = new Map<string, 1 | 2>()
+  const readResultCache = new Map<string, Promise<ToolExecutionResult>>()
   if (hasPrefetchedMemoryLookup) {
     calledToolNames.push('search_memory')
   }
@@ -745,12 +798,17 @@ export async function runAgent({
       signal,
       selectionContextReadLevels,
       pushToolProgress,
+      readResultCache,
+      Math.max(0, mergedConfig.maxToolCalls - toolCalls),
+      false,
     )
 
-    for (const { name, result, rawResult } of repairResults) {
-      addUniqueSources(knowledgeSources, extractSourcesFromToolResult(name, rawResult || result))
-      calledToolNames.push(name)
-      toolCalls++
+    for (const { name, result, rawResult, executed } of repairResults) {
+      if (executed !== false) {
+        addUniqueSources(knowledgeSources, extractSourcesFromToolResult(name, rawResult || result))
+        calledToolNames.push(name)
+        toolCalls++
+      }
       pushStep({
         type: 'observation',
         content: result,
@@ -804,6 +862,19 @@ export async function runAgent({
   for (let i = 0; i < mergedConfig.maxSteps; i++) {
     if (signal?.aborted) {
       return { answer: '已取消本次 Agent 请求。', steps, toolCalls, reason: 'error', sources: knowledgeSources }
+    }
+    if (toolCalls >= mergedConfig.maxToolCalls && (!requiresEditConfirmation || editToolCalls > 0)) {
+      return {
+        answer: '',
+        steps,
+        toolCalls,
+        reason: 'max_tool_calls',
+        finalMessages: buildFinalAnswerMessages(
+          messages,
+          '本轮已达到工具调用上限。请仅基于已有结果给出当前可确认的结论，并明确说明仍缺少的信息。',
+        ),
+        sources: knowledgeSources,
+      }
     }
 
     // Get AI response with timeout
@@ -892,11 +963,10 @@ export async function runAgent({
       const cleanAnswer = stripToolCallJson(content)
       if (cleanAnswer || content) {
         return {
-          answer: '',
+          answer: cleanAnswer || content,
           steps,
           toolCalls,
           reason: 'completed',
-          finalMessages: buildFinalAnswerMessages(messages, answerInstruction),
           sources: knowledgeSources,
         }
       }
@@ -931,6 +1001,9 @@ export async function runAgent({
       signal,
       selectionContextReadLevels,
       pushToolProgress,
+      readResultCache,
+      Math.max(0, mergedConfig.maxToolCalls - toolCalls),
+      requiresEditConfirmation && editToolCalls === 0,
     )
 
     // 记录调用的工具
@@ -950,7 +1023,7 @@ export async function runAgent({
     }
 
     // 添加工具结果到消息
-    for (const { name, result, executed } of toolResults) {
+    for (const { name, result, executed, reused } of toolResults) {
       pushStep({
         type: 'observation',
         content: result,
@@ -958,7 +1031,10 @@ export async function runAgent({
         timestamp: Date.now(),
       })
 
-      messages.push({ role: 'assistant', content: executed === false ? `未执行工具: ${name}` : `调用工具: ${name}` })
+      messages.push({
+        role: 'assistant',
+        content: reused ? `复用本轮工具结果: ${name}` : executed === false ? `未执行工具: ${name}` : `调用工具: ${name}`,
+      })
       messages.push({
         role: 'user',
         content: name === 'read_selection_context'

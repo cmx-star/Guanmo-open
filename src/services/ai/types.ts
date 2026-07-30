@@ -210,6 +210,7 @@ export const DEFAULT_AI_CONFIG: AiConfig = {
 export const SYSTEM_TEMPERATURE = {
   routing: 0,
   agentPlanning: 0.1,
+  agentAnswer: 0.3,
   ragRewrite: 0.1,
   memoryExtract: 0.1,
   editConfirm: 0.1,

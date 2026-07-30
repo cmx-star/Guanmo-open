@@ -439,7 +439,7 @@ export function useAiChat() {
               isCancelled: () => !isCurrentRequest(),
               filterToolJson: true,
               signal: requestController.signal,
-              temperature: SYSTEM_TEMPERATURE.agentPlanning,
+              temperature: SYSTEM_TEMPERATURE.agentAnswer,
               reasoningMode,
             })
 

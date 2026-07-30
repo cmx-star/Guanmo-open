@@ -2,32 +2,32 @@
 
 ## 当前状态
 
-- 当前阶段：阶段 4｜降低 Agent 延迟与重复调用
+- 当前阶段：阶段 6｜校准 Provider 能力与产品表述
 - 阶段状态：未开始
 - 上次执行结果：
-  - 完成阶段 3 的编排纯函数拆分，`useAiChat` 保留生命周期、取消、store 和进度职责
-  - 删除无实际检索行为的知识库预检索空壳
-  - 消除 `routingService` 对 `executor` 的回答提示词反向依赖
-  - 新增 3 条编排纯函数定向测试
+  - 阶段 5 生产实现已由本地提交 `1f9a9cb` 完成，本次补齐 2 份匿名定向测试
+  - 记忆设置页使用 SQL 状态、分类和项目作用域过滤，并按 active 20 条、candidate 10 条稳定分页
+  - 基础分页强制不加载 Embedding；全量 `loadAllMemories()` 继续服务备份、Agent 和提取调用
+  - 候选确认继续复用 Rust 事务点查询，未修改表、字段、索引或迁移
 - 验证结果：
-  - `npm run test:agent-parser`：通过
-  - `npm run test:ai-http`：通过
+  - 阶段 4/5 联合定向测试：5 files，167 tests 通过
+  - `npm run test:memory-query`：通过
   - `npm run test:runtime-schemas`：通过
-  - `npm run test:selection-context`：通过
-  - `vitest` 编排与路由定向测试：155 通过
   - `npm run typecheck`：通过
-  - 阶段 3 相关 ESLint：通过
+  - `npm run lint`：通过（0 errors，43 个既有 warnings）
 - 本阶段剩余：
-  - 在同一模型、配置和匿名请求集上建立真实路径性能基线
-  - 根据基线选择最小的 Agent 往返优化
-  - 验证调用预算、取消、超时和重复工具调用
+  - 建立 Provider 能力矩阵并校准设置页表述
+  - 验证 OpenAI Compatible、reasoning 降级和 Origin 授权
+  - 隐藏或准确拒绝尚未实现的原生协议
 - 本阶段允许修改：
-  - Agent 循环与最终回答生成
-  - 工具结果复用与调用预算
-  - 与真实路径性能直接相关的最小代码和测试
+  - `src/services/ai/aiClient.ts`
+  - `src/services/ai/providers/**`
+  - `src/services/ai/reasoningAdapter.ts`
+  - `src/services/externalHttp.ts` 的现有调用边界
+  - 与 Provider 展示直接相关的设置代码、文档和测试
   - `AI_IMPLEMENTATION_PLAN.md`
 - 阻塞问题：无
-- 下一阶段：阶段 5｜改善长期记忆召回
+- 下一阶段：阶段 7｜体验收口与桌面验收
 
 ## 项目目标
 
@@ -635,54 +635,91 @@ npm run build:desktop
 
 ## 当前阶段详细任务
 
-### 阶段 4｜降低 Agent 延迟与重复调用
+### 阶段 6｜校准 Provider 能力与产品表述
 
 #### 目标
 
-在不降低答案质量和安全性的前提下，基于真实路径测量减少无意义的模型与工具往返。
+让设置界面、能力检测和实际协议实现保持一致。
 
 #### 开始前必须读取
 
 - `AGENTS.md`
-- `docs/agent-contracts/ai-selection.md`
-- `src/services/agent/executor.ts`
-- `src/hooks/useAiChat.ts` 中的 Agent 与最终回答入口
-- 阶段 1 路由矩阵与阶段 3 编排测试
+- `docs/agent-contracts/external-http.md`
+- `docs/agent-contracts/ui.md`
+- `src/services/ai/aiClient.ts`
+- `src/services/ai/providers/**`
+- `src/services/ai/reasoningAdapter.ts`
+- Provider 展示、请求体与 reasoning 定向测试
 
 #### 允许修改
 
-- Agent 循环与最终回答生成
-- 工具结果复用与调用预算
-- 与真实路径性能直接相关的最小代码和测试
+- `src/services/ai/aiClient.ts`
+- `src/services/ai/providers/**`
+- `src/services/ai/reasoningAdapter.ts`
+- `src/services/externalHttp.ts` 的现有调用边界
+- 与 Provider 展示直接相关的设置代码、文档和测试
 - `AI_IMPLEMENTATION_PLAN.md`
 
 #### 验收标准
 
-- [ ] 修改前记录同一模型、配置和匿名请求集的真实路径基线。
-- [ ] 普通请求调用次数不高于基线。
-- [ ] 修改确认请求不执行无意义的最终综合。
-- [ ] 研究请求来源和信息不足边界不退化。
-- [ ] 同轮不存在相同 RAG、Memory 或 Web 查询的重复调用。
-- [ ] 取消、超时和最大步骤产生稳定终态。
-- [ ] 首字延迟和总耗时相对基线有明确改善或证明无回归。
+- [ ] 用户在配置前能知道协议是否真正可用。
+- [ ] 未实现协议不会进入运行后才失败。
+- [ ] OpenAI Compatible 旧配置保持兼容。
+- [ ] reasoning 参数失败时可安全降级。
+- [ ] 自定义和本地 Origin 授权行为不变。
 
 #### 检查命令
 
 ```bash
-npm run test:agent-parser
-npm run test:rag-query
-npm run test:runtime-schemas
+npm run test:ai-http
 npm run typecheck
 ```
 
 #### 禁止事项
 
-- [ ] 不通过减少来源、取消确认或扩大缓存有效期换取速度。
-- [ ] 不跨用户请求复用工具结果。
-- [ ] 没有真实测量不宣称性能优化完成。
-- [ ] 没有本地模型或用户明确授权时不自动调用付费 API。
+- [ ] 不为“支持更多 Provider”复制网络实现。
+- [ ] 不使用 WebView 原生 `fetch`。
+- [ ] 不未经真实验证宣称支持某厂商原生协议。
+- [ ] 不在无明确需求时新增大型协议依赖。
 
 ## 阶段历史
+
+### 阶段 5｜记忆设置 SQL 分页与点查询
+
+- 状态：已完成
+- 完成内容：
+  - 查询层支持稳定 `limit/offset`、SQL `COUNT`、状态/分类过滤及仅当前项目作用域过滤
+  - 旧调用默认语义保持兼容，分页上限归一化为最多 200，排序固定为 `updated_at DESC, id ASC`
+  - `loadMemoryPage()` 强制 `includeEmbedding: false`，保留 `loadAllMemories()` 的全量与 Embedding 语义
+  - 设置页 active/candidate 分别使用 20/10 条分页，操作后刷新当前页并在空白末页安全回退
+  - 候选确认继续使用 `confirm_memory_candidate_transaction`，未修改数据库结构或迁移
+  - 补齐匿名查询边界与设置分页测试（2 files，6 tests）
+- 验证结果：
+  - 阶段 4/5 联合定向 Vitest：5 files，167 tests 通过
+  - `npm run test:memory-query`、`npm run test:runtime-schemas`、`npm run typecheck`：通过
+  - `npm run lint`：通过（0 errors，43 个既有 warnings，本阶段未新增）
+  - 生产实现已包含在本地提交 `1f9a9cb`，本次提交补齐测试与交接状态
+- 遗留问题：无
+
+### 阶段 4｜降低 Agent 延迟与重复调用
+
+- 状态：已完成
+- 完成内容：
+  - 使用已配置的 `deepseek-v4-flash`、流式模式和两条匿名请求完成修改前后真实路径 A/B
+  - Agent 工具后的模型回答直接作为最终答案，不再固定发起第三次综合调用
+  - 同一请求内按工具名和稳定参数复用只读工具结果，不跨请求缓存
+  - 增加 8 次工具调用预算与 `max_tool_calls` 降级终态；修改确认不被预算拦截
+  - 最终回答使用独立 `agentAnswer` 温度，规划继续使用 `agentPlanning`
+  - 新增匿名测试覆盖二次综合、同参去重、预算、修改确认、取消和超时
+- 验证结果：
+  - 真实时间场景：模型调用 3→2，用户可见答案约 5.21s→3.14s，总耗时约降低 40%
+  - 真实 Web 研究：模型调用未增加，总耗时 19.21s→14.78s，来源 5→9
+  - `npm run test:agent-parser`、`npm run test:rag-query`、`npm run test:runtime-schemas`、`npm run typecheck`：通过
+  - Agent 执行预算、编排与路由定向测试：161 通过
+  - 阶段相关 ESLint：0 error（`executor.ts` 保留 3 个既有 warning）；`git diff --check`：通过
+- 遗留问题：
+  - Web 模型在 A/B 后样本中选择了两个不同查询的搜索调用；同参重复执行已由定向测试阻止
+  - 未扩大到全量 E2E 或发布门禁，留待阶段 7 桌面验收
 
 ### 阶段 3｜拆分中央编排，保持行为不变
 
