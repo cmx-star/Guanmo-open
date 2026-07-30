@@ -5,7 +5,16 @@ import appIcon from '@/assets/icon-settings.png'
 import { isTauri } from '@/hooks/useTauri'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { WebSearchConfig } from '@/services/webSearch'
-import { initAiClient, initEmbeddingClient, isLocalApi, testAiConnection, validateAiStatus } from '@/services/ai/aiClient'
+import {
+  CHAT_PROTOCOL_CAPABILITIES,
+  SUPPORTED_CHAT_PROTOCOLS,
+  getChatProtocolCapabilities,
+  initAiClient,
+  initEmbeddingClient,
+  isLocalApi,
+  testAiConnection,
+  validateAiStatus,
+} from '@/services/ai/aiClient'
 import { AI_CHAT_PRESETS, AI_EMBEDDING_PRESETS } from '@/services/ai/types'
 import type { AiConfig, ChatProtocol, CustomPreset, EmbeddingProtocol, ValidateResult } from '@/services/ai/types'
 import { testWebSearchConnection, updateSearchConfig } from '@/services/webSearch'
@@ -397,9 +406,10 @@ function LightPaletteSegmented({
 }
 
 const CHAT_PROTOCOL_OPTIONS: { key: ChatProtocol; label: string }[] = [
-  { key: 'openai-chat', label: 'OpenAI Chat Completions' },
-  { key: 'anthropic-messages', label: 'Anthropic Messages' },
-  { key: 'openai-responses', label: 'OpenAI Responses' },
+  ...SUPPORTED_CHAT_PROTOCOLS.map((key) => ({
+    key,
+    label: CHAT_PROTOCOL_CAPABILITIES[key].label,
+  })),
 ]
 
 const EMB_PROTOCOL_OPTIONS: { key: EmbeddingProtocol; label: string }[] = [
@@ -464,6 +474,15 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
     setChatTesting(true)
     setChatTestResult(null)
     try {
+      const capabilities = getChatProtocolCapabilities(ai.protocol)
+      if (!capabilities.implemented) {
+        setChatTestResult({
+          ok: false,
+          error: 'config',
+          message: capabilities.unsupportedReason,
+        })
+        return
+      }
       const result = await testAiConnection(ai)
       setChatTestResult(result)
     } catch (err) {
@@ -551,7 +570,9 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
 
   // 按协议过滤系统预设 + 合并用户自定义预设
   const filteredSysChatPresets = AI_CHAT_PRESETS.filter((p) => p.key === 'custom' || p.protocol === ai.protocol)
-  const filteredCustomChatPresets = customChatPresets.filter((p) => p.protocol === ai.protocol)
+  const filteredCustomChatPresets = customChatPresets.filter(
+    (p) => p.protocol === ai.protocol && CHAT_PROTOCOL_CAPABILITIES[p.protocol as ChatProtocol]?.implemented
+  )
 
   const chatPresetOptions = [
     ...filteredCustomChatPresets.map((p) => ({ key: p.id, label: p.label })),
@@ -586,6 +607,7 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
       preset.baseUrl === ai.embedding.baseUrl &&
       preset.embeddingModel === ai.embedding.embeddingModel
     )?.key ?? 'custom'
+  const chatProtocolCapabilities = getChatProtocolCapabilities(ai.protocol)
 
   return (
     <div className="w-full pb-6">
@@ -616,6 +638,21 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
           }}
         />
       </SettingField>
+      <div className={`mb-3 rounded-lg border px-3 py-2 text-caption ${
+        chatProtocolCapabilities.implemented
+          ? 'border-gm-border bg-gm-surface-elevated text-gm-text-secondary'
+          : 'border-gm-error/30 bg-gm-error/5 text-gm-error'
+      }`}>
+        {chatProtocolCapabilities.implemented ? (
+          <>
+            <div>当前支持：对话、流式输出、原生 Tool Calling、模型列表与 OpenAI Embeddings。</div>
+            <div className="mt-1">Reasoning 按供应商与模型适配；参数被服务拒绝时会自动移除并重试。</div>
+            <div className="mt-1">Anthropic Messages 与 OpenAI Responses 原生协议尚未实现，因此不开放配置。</div>
+          </>
+        ) : (
+          chatProtocolCapabilities.unsupportedReason
+        )}
+      </div>
       <SettingField label="服务预设" description="按协议类型过滤，选择后自动填入">
         <Select
           options={chatPresetOptions}
@@ -657,7 +694,13 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
 
       {/* 测试连接 */}
       <div className="py-1 flex items-center gap-2">
-        <Button type="default" size="small" loading={chatTesting} onClick={handleChatTest}>
+        <Button
+          type="default"
+          size="small"
+          loading={chatTesting}
+          disabled={!chatProtocolCapabilities.implemented}
+          onClick={handleChatTest}
+        >
           测试连接
         </Button>
         {currentChatPreset !== 'custom' && customChatPresets.some(p => p.id === currentChatPreset) && (
