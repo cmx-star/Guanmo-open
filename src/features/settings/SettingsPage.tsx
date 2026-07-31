@@ -638,21 +638,6 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
           }}
         />
       </SettingField>
-      <div className={`mb-3 rounded-lg border px-3 py-2 text-caption ${
-        chatProtocolCapabilities.implemented
-          ? 'border-gm-border bg-gm-surface-elevated text-gm-text-secondary'
-          : 'border-gm-error/30 bg-gm-error/5 text-gm-error'
-      }`}>
-        {chatProtocolCapabilities.implemented ? (
-          <>
-            <div>当前支持：对话、流式输出、原生 Tool Calling、模型列表与 OpenAI Embeddings。</div>
-            <div className="mt-1">Reasoning 按供应商与模型适配；参数被服务拒绝时会自动移除并重试。</div>
-            <div className="mt-1">Anthropic Messages 与 OpenAI Responses 原生协议尚未实现，因此不开放配置。</div>
-          </>
-        ) : (
-          chatProtocolCapabilities.unsupportedReason
-        )}
-      </div>
       <SettingField label="服务预设" description="按协议类型过滤，选择后自动填入">
         <Select
           options={chatPresetOptions}
