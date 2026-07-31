@@ -579,6 +579,40 @@ body {
   background: var(--gm-primary-subtle);
 }
 
+.gm-default-mode-segmented {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(68px, 1fr));
+  width: min(100%, 168px);
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--gm-border);
+  border-radius: 8px;
+  background: var(--gm-surface-elevated);
+}
+
+.gm-default-mode-segmented__item {
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gm-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms var(--gm-ease), background-color 120ms var(--gm-ease);
+}
+
+.gm-default-mode-segmented__item:hover {
+  color: var(--gm-text-secondary);
+  background: var(--gm-surface-hover);
+}
+
+.gm-default-mode-segmented__item[data-active='true'] {
+  color: var(--gm-text);
+  background: var(--gm-primary-subtle);
+}
+
 @keyframes gmPrewarmCodexParticles {
   from { transform: translateX(-100%); }
   to { transform: translateX(100%); }

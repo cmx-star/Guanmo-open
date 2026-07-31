@@ -35,6 +35,7 @@ interface EditorSettings {
   inlinePreviewEdit: boolean
   modePerformancePolicy: 'memory' | 'balanced' | 'speed'
   fullscreenContentPadding: number
+  defaultOpenMode: 'edit' | 'preview'
 }
 
 interface AppearanceSettings {
@@ -97,6 +98,7 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   inlinePreviewEdit: true,
   modePerformancePolicy: 'balanced',
   fullscreenContentPadding: FULLSCREEN_CONTENT_PADDING.default,
+  defaultOpenMode: 'preview',
 }
 
 const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {

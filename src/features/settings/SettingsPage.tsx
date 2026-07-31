@@ -1160,6 +1160,26 @@ function EditorSettings() {
       </SettingField>
       <Sep />
       <SectionTitle>行为</SectionTitle>
+      <SettingField label="默认打开模式" description="通过文件关联冷启动打开文件时，默认使用编辑或预览模式；已启动时不改变当前模式">
+        <div className="gm-default-mode-segmented" role="radiogroup" aria-label="默认打开模式">
+          {[
+            { key: 'edit', label: '编辑' },
+            { key: 'preview', label: '预览' },
+          ].map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className="gm-default-mode-segmented__item"
+              data-active={editor.defaultOpenMode === option.key}
+              role="radio"
+              aria-checked={editor.defaultOpenMode === option.key}
+              onClick={() => updateEditorSettings({ defaultOpenMode: option.key as 'edit' | 'preview' })}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </SettingField>
       <SettingField label="自动换行" description="长行自动折行显示">
         <Switch checked={editor.wordWrap} onChange={(v) => updateEditorSettings({ wordWrap: v })} />
       </SettingField>
@@ -1332,6 +1352,7 @@ function GeneralSettings() {
       autoSendAiShortcut: true,
       inlinePreviewEdit: true,
       modePerformancePolicy: 'balanced',
+      defaultOpenMode: 'preview',
     })
     updateAppearanceSettings({ customCursorEnabled: true, aiMascotAvatarEnabled: false, theme: 'light', lightPalette: 'warm' })
     updateWebSearchConfig({ provider: 'duckduckgo', apiKey: '', maxResults: 5, customUrl: '' })
