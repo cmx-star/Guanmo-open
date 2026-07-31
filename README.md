@@ -29,7 +29,8 @@
         <img src="https://get.microsoft.com/images/zh-cn%20dark.svg"
              alt="从 Microsoft Store 安装观墨"
              width="200" />
-      </a>
+      </a><br/>
+      <sub>微软商店版本更新频率会慢一些</sub>
     </td>
   </tr>
   <tr>
