@@ -21,3 +21,4 @@
 - 只有要求沿用用户既有风格、语气、格式或习惯的改写才轻量检索 `preference/instruction` 长期记忆；普通改写不检索记忆。
 - 手动保存沿用 1.2 秒 RAG 索引延迟，自动保存使用 5 秒索引防抖；同一文件的重复任务必须继续合并。
 - Agent 执行入口使用单一 `AgentRunRequest` 对象；外部工具事件必须先经 `agent/session.ts` 运行时解码，再写入聊天 store。
+- Agent 开启流式输出时，执行层必须把当前模型响应的累计文本实时传给聊天 UI；同批次包含多个工具调用时，每个工具都必须分别发送带 `toolName` 的 `action` 与 `observation` 事件。

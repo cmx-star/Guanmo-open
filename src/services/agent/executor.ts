@@ -555,6 +555,7 @@ export async function runAgent({
   signal,
   temperature,
   onStep,
+  onStreamContent,
   requiredCapabilities,
   untrustedContext,
   customPreferencePrompt,
@@ -730,6 +731,7 @@ export async function runAgent({
       }
       if (chunk.content) {
         content += chunk.content
+        onStreamContent?.(content)
       }
       if (chunk.done) break
     }
@@ -986,13 +988,15 @@ export async function runAgent({
     }
 
     // 执行工具调用
-    pushStep({
-      type: 'action',
-      content: `调用工具: ${parsedToolCalls.map(tc => tc.name).join(', ')}`,
-      toolName: parsedToolCalls[0].name,
-      toolArgs: parsedToolCalls[0].args,
-      timestamp: Date.now(),
-    })
+    for (const toolCall of parsedToolCalls) {
+      pushStep({
+        type: 'action',
+        content: `调用工具: ${toolCall.name}`,
+        toolName: toolCall.name,
+        toolArgs: toolCall.args,
+        timestamp: Date.now(),
+      })
+    }
 
     const toolResults = await executeToolCalls(
       parsedToolCalls.map(tc => ({ name: tc.name, args: tc.args })),

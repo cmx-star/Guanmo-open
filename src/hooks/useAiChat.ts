@@ -15,7 +15,7 @@ import { readFile as readTauriFile } from '@/hooks/useTauri'
 import { setAgentScopeContext } from '@/services/aiScope'
 import { searchScopedKnowledge, shouldTriggerScopedRag, streamFinalAnswer } from '@/services/aiChatFlow'
 import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForModel, buildSupplementalAiContext, countRagSourcesInContext, createContextMeta, createUserChatMessage, prepareChatHistoryForModel, resolveAiAnswerMode } from '@/services/aiChatMessages'
-import { stripToolCallJson } from '@/services/agent/toolCallParser'
+import { hideLikelyToolJsonPrefix, stripToolCallJson } from '@/services/agent/toolCallParser'
 import { buildMemoryContext, isPersonalizedRewriteMemoryIntent, processMemoryCandidateExtraction, searchMemories } from '@/services/memory/memoryService'
 import type { ManualCapability } from '@/components/ai/ManualToolToggle'
 import { hydrateSettingsSecrets } from '@/services/settingsSecrets'
@@ -34,7 +34,11 @@ function getAgentProgressText(step: AgentStep): string {
     }[step.progressStage || 'rag_searching']
   }
   if (step.type === 'thought') return 'AI 正在判断下一步处理方式...'
-  if (step.type === 'observation') return '工具结果已返回，正在整理下一步...'
+  if (step.type === 'observation') {
+    return step.toolName
+      ? `${getAgentToolLabel(step.toolName)}已完成，正在整理下一步...`
+      : '工具结果已返回，正在整理下一步...'
+  }
 
   switch (step.toolName) {
     case 'search_knowledge':
@@ -60,6 +64,21 @@ function getAgentProgressText(step: AgentStep): string {
     default:
       return step.toolName ? `正在执行工具：${step.toolName}...` : 'Agent 正在执行工具...'
   }
+}
+
+function getAgentToolLabel(toolName: string): string {
+  return {
+    search_knowledge: '本地知识库检索',
+    search_memory: '长期记忆读取',
+    list_database_contents: '知识库索引概览读取',
+    list_memories: '记忆库概览读取',
+    web_search: '联网搜索',
+    save_memory: '长期记忆写入',
+    read_context_file: '授权文件读取',
+    read_selection_context: '上下文读取',
+    replace_current_tab_text: '修改确认卡片生成',
+    get_current_time: '系统时间读取',
+  }[toolName] || `工具 ${toolName}`
 }
 
 export function useAiChat() {
@@ -320,11 +339,15 @@ export function useAiChat() {
         addTimelineItem({ type: 'local_search_start', label: 'Agent 开始规划工具链路' })
         let pendingEditCount = 0
         let liveAgentStepCount = 0
+        let hasVisibleStreamContent = false
         const handleAgentStep = (step: AgentStep) => {
           if (!isCurrentRequest()) return
           liveAgentStepCount++
           addAgentStep(step)
-          updateRequestMessage(getAgentProgressText(step))
+          if (step.type !== 'thought' || !hasVisibleStreamContent) {
+            updateRequestMessage(getAgentProgressText(step))
+          }
+          if (step.type !== 'thought') hasVisibleStreamContent = false
           const event = decodeAgentStepEvent(step)
           const knowledgeOutcome = decodeKnowledgeSearchOutcome(event)
           if (event.type === 'progress') {
@@ -363,8 +386,13 @@ export function useAiChat() {
             addTimelineItem({ type: 'local_search_start', label: '查看知识库索引概览' })
           } else if (event.type === 'action' && event.toolName === 'list_memories') {
             addTimelineItem({ type: 'local_search_start', label: '查看记忆库概览' })
+          } else if (event.type === 'action' && event.toolName) {
+            addTimelineItem({ type: 'local_search_start', label: `执行${getAgentToolLabel(event.toolName)}` })
           } else if (event.type === 'observation') {
-            addTimelineItem({ type: 'web_search_done', label: '工具结果已返回' })
+            addTimelineItem({
+              type: 'web_search_done',
+              label: event.toolName ? `${getAgentToolLabel(event.toolName)}已完成` : '工具结果已返回',
+            })
             if (!event.pendingEdit) return
             const targetMessageId = pendingEditCount === 0
               ? assistantMessageId
@@ -394,6 +422,13 @@ export function useAiChat() {
           signal: requestController.signal,
           temperature: SYSTEM_TEMPERATURE.agentPlanning,
           onStep: handleAgentStep,
+          onStreamContent: (streamedContent) => {
+            if (!isCurrentRequest()) return
+            const visibleContent = hideLikelyToolJsonPrefix(streamedContent)
+            if (!visibleContent) return
+            hasVisibleStreamContent = true
+            updateRequestMessage(visibleContent)
+          },
           customPreferencePrompt: ai.customPreferencePrompt,
           streamEnabled: ai.streamEnabled,
         })

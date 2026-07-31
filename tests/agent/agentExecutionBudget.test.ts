@@ -30,6 +30,7 @@ describe('Agent execution budget', () => {
   let runAgent: typeof import('@/services/agent/executor').runAgent
   let registerTool: typeof import('@/services/agent/toolRegistry').registerTool
   const executeAnonymousRead = vi.fn(async () => '匿名工具结果')
+  const executeAnonymousList = vi.fn(async () => '匿名列表结果')
 
   beforeAll(async () => {
     const executor = await import('@/services/agent/executor')
@@ -41,6 +42,12 @@ describe('Agent execution budget', () => {
       parameters: [],
       execute: executeAnonymousRead,
     })
+    registry.registerTool({
+      name: 'list_memories',
+      description: '匿名列表工具',
+      parameters: [],
+      execute: executeAnonymousList,
+    })
     runAgent = executor.runAgent
     registerTool = registry.registerTool
   })
@@ -49,6 +56,7 @@ describe('Agent execution budget', () => {
     responseQueue.length = 0
     streamChat.mockClear()
     executeAnonymousRead.mockClear()
+    executeAnonymousList.mockClear()
   })
 
   it('直接复用工具后的模型答案，不再请求第三次最终综合', async () => {
@@ -58,14 +66,19 @@ describe('Agent execution budget', () => {
         done: true,
         toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
       }],
-      [{ content: '匿名最终答案', done: true }],
+      [
+        { content: '匿名', done: false },
+        { content: '最终答案', done: true },
+      ],
     )
+    const onStreamContent = vi.fn()
 
     const result = await runAgent({
       query: '匿名时间请求',
       candidateToolNames: ['get_current_time'],
       requiredCapabilities: ['time'],
       streamEnabled: true,
+      onStreamContent,
     })
 
     expect(streamChat).toHaveBeenCalledTimes(2)
@@ -76,6 +89,38 @@ describe('Agent execution budget', () => {
       reason: 'completed',
     })
     expect(result.finalMessages).toBeUndefined()
+    expect(onStreamContent).toHaveBeenNthCalledWith(1, '匿名')
+    expect(onStreamContent).toHaveBeenNthCalledWith(2, '匿名最终答案')
+  })
+
+  it('为同批次的每个工具分别发送执行阶段事件', async () => {
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [
+          { index: 0, name: 'get_current_time', arguments: '{}' },
+          { index: 1, name: 'list_memories', arguments: '{}' },
+        ],
+      }],
+      [{ content: '匿名多工具答案', done: true }],
+    )
+    const onStep = vi.fn()
+
+    const result = await runAgent({
+      query: '匿名多工具请求',
+      candidateToolNames: ['get_current_time', 'list_memories'],
+      streamEnabled: true,
+      onStep,
+    })
+
+    expect(executeAnonymousRead).toHaveBeenCalledTimes(1)
+    expect(executeAnonymousList).toHaveBeenCalledTimes(1)
+    expect(result.toolCalls).toBe(2)
+    expect(onStep.mock.calls
+      .map(([step]) => step)
+      .filter((step) => step.type === 'action')
+      .map((step) => step.toolName)).toEqual(['get_current_time', 'list_memories'])
   })
 
   it('同轮相同只读工具与参数只执行一次', async () => {

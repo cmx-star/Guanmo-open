@@ -77,6 +77,7 @@ export interface AgentRunRequest {
   signal?: AbortSignal
   temperature?: number
   onStep?: (step: AgentStep) => void
+  onStreamContent?: (content: string) => void
   requiredCapabilities?: readonly Capability[]
   untrustedContext?: string
   customPreferencePrompt?: string

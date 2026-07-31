@@ -69,6 +69,7 @@ export function buildAgentRunRequest(options: {
   signal: AbortSignal
   temperature: number
   onStep: (step: AgentStep) => void
+  onStreamContent?: (content: string) => void
   customPreferencePrompt?: string
   streamEnabled: boolean
 }): {
@@ -108,6 +109,7 @@ export function buildAgentRunRequest(options: {
       signal: options.signal,
       temperature: options.temperature,
       onStep: options.onStep,
+      onStreamContent: options.onStreamContent,
       requiredCapabilities: options.routingDecision.required,
       untrustedContext,
       customPreferencePrompt: options.customPreferencePrompt,
