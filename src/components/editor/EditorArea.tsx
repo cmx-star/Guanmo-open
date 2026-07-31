@@ -237,7 +237,7 @@ export function EditorArea() {
 
   const [leftPreviewMounted, setLeftPreviewMounted] = useState(false)
   const [rightPreviewMounted, setRightPreviewMounted] = useState(false)
-  const [editorMounted, setEditorMounted] = useState(true)
+  const [editorMounted, setEditorMounted] = useState(false)
   const [diffMounted, setDiffMounted] = useState(false)
   const [draftDecisionVersion, setDraftDecisionVersion] = useState(0)
   const leftPreviewMountedRef = useRef(leftPreviewMounted)
@@ -546,6 +546,47 @@ export function EditorArea() {
       setResourceMounted('diff', false)
     }
   }, [viewMode, modeResourcePolicy, leftPreviewVisible, editorVisible, activeTab?.id, draftDecisionVersion, editorMounted, leftPreviewMounted, rightPreviewMounted]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Emit first-visible events after DOM commit (requestAnimationFrame)
+  const editorBecameVisibleRef = useRef(false)
+  const previewBecameVisibleRef = useRef(false)
+  useEffect(() => {
+    if (editorVisible && editorMounted && !editorBecameVisibleRef.current && activeTab?.id) {
+      editorBecameVisibleRef.current = true
+      const raf = requestAnimationFrame(() => {
+        if (import.meta.env.DEV) {
+          eventMarker.mark('editor-first-visible', {
+            charCount: activeTab.content.length,
+            mode: viewMode,
+            policy: modePerformancePolicy,
+          })
+        }
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+    if (!editorVisible && !editorMounted) {
+      editorBecameVisibleRef.current = false
+    }
+  }, [editorVisible, editorMounted, activeTab?.id, activeTab?.content.length, viewMode, modePerformancePolicy])
+
+  useEffect(() => {
+    if (leftPreviewVisible && leftPreviewMounted && !previewBecameVisibleRef.current && activeTab?.id) {
+      previewBecameVisibleRef.current = true
+      const raf = requestAnimationFrame(() => {
+        if (import.meta.env.DEV) {
+          eventMarker.mark('preview-first-visible', {
+            charCount: activeTab.content.length,
+            mode: viewMode,
+            policy: modePerformancePolicy,
+          })
+        }
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+    if (!leftPreviewVisible && !leftPreviewMounted) {
+      previewBecameVisibleRef.current = false
+    }
+  }, [leftPreviewVisible, leftPreviewMounted, activeTab?.id, activeTab?.content.length, viewMode, modePerformancePolicy])
 
   // Document switch: always release old document instances
   const prevActiveTabIdRef = useRef(activeTabId)

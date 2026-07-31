@@ -55,6 +55,8 @@
         "test:update-service": "node scripts/run-update-service-check.mjs",
         "test:toast": "node scripts/run-toast-store-check.mjs",
         "test:ai-http": "node scripts/run-ai-http-transport-check.mjs",
+        "test:preview-interaction": "vitest run scripts/markdown-preview-prototype/interaction.test.tsx",
+        "test:preview-ab": "vitest run scripts/markdown-preview-prototype/run-ab-benchmark.test.tsx",
         "check:paths": "node scripts/check-paths.mjs",
         "check:bundle": "node scripts/bundle-budget-check.mjs --mode desktop",
         "check:bundle:web": "node scripts/bundle-budget-check.mjs --mode web",
