@@ -182,4 +182,14 @@ describe('stage-2 | PrototypeMarkdownPreview interaction primitives', () => {
     const back = findBlockIndexByOffset(model, p2.startOffset + 5)
     expect(model.blocks[back]?.blockId).toBe(p2.blockId)
   })
+
+  it('等长 LaTeX 规范化后仍精确保留 CRLF 原文切片', () => {
+    const md = '\uFEFF# 标题\r\n\r\n\\[\r\nx + y\r\n\\]\r\n\r\n尾段'
+    const model = createMarkdownPreviewModel(md)
+
+    expect(model.normalizedContent).toHaveLength(md.length)
+    for (const block of model.blocks) {
+      expect(block.rawSource).toBe(md.slice(block.startOffset, block.endOffset))
+    }
+  })
 })

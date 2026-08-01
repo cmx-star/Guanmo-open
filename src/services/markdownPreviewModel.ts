@@ -1,15 +1,12 @@
 /**
- * Markdown 预览单次解析文档模型（隔离原型，仅供阶段2验证）
+ * Markdown 预览单次解析文档模型
  *
  * 设计目标：
  * 1. 全文只执行一次 remark 解析，产出稳定的顶层块描述
  * 2. 每个块保留原始 startOffset/endOffset、startLine/endLine，供预览内编辑使用
  * 3. 模型一次性产出 reference definitions、footnote definitions、heading IDs 等全局信息，
  *    避免可视区块渲染时丢失跨块上下文
- * 4. 不引入 Worker、不新增依赖、不修改生产 MarkdownPreview 入口
- *
- * 本文件被 scripts/markdown-preview-prototype/ 下的原型代码引用；
- * 生产代码在阶段3获得 boss 明确批准前不得 import。
+ * 4. 同时供隔离原型和生产 MarkdownPreview 使用，不引入 Worker 或新增依赖
  */
 
 import { remark } from 'remark'
@@ -40,8 +37,12 @@ export interface PreviewBlock {
   type: PreviewBlockType
   startLine: number
   endLine: number
+  /** 原始 Markdown 中的 offset；用于预览内编辑与冲突检测 */
   startOffset: number
   endOffset: number
+  /** LaTeX 规范化后内容中的 offset；用于 ReactMarkdown 按块切片渲染 */
+  normalizedStartOffset: number
+  normalizedEndOffset: number
   /** 原始 Markdown 切片；用于预览内编辑与冲突检测 */
   rawSource: string
   /**
@@ -137,7 +138,9 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
       endLine: frontmatter.endLine,
       startOffset: 0,
       endOffset: frontmatter.endOffset,
-      rawSource: rawContent.slice(0, rawEquivalentEndOffset(rawContent, frontmatter.endOffset, normalizedContent)),
+      normalizedStartOffset: 0,
+      normalizedEndOffset: frontmatter.endOffset,
+      rawSource: rawContent.slice(0, frontmatter.endOffset),
     })
   }
 
@@ -182,8 +185,9 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
       // footnote definition 仍然作为可见块保留，但放入 definitions 表中供引用解析
     }
 
-    const rawStart = rawEquivalentOffset(rawContent, startOffset, normalizedContent, 'start')
-    const rawEnd = rawEquivalentOffset(rawContent, endOffset, normalizedContent, 'end')
+    // LaTeX 规范化只做等长定界符替换，原文与规范化内容的 offset 始终一致。
+    const rawStart = startOffset
+    const rawEnd = endOffset
     const rawSource = rawContent.slice(rawStart, rawEnd)
     const block: PreviewBlock = {
       blockId: makeBlockId(type, blockIndex, normalizedContent.slice(startOffset, Math.min(startOffset + 120, endOffset))),
@@ -192,6 +196,8 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
       endLine,
       startOffset: rawStart,
       endOffset: rawEnd,
+      normalizedStartOffset: startOffset,
+      normalizedEndOffset: endOffset,
       rawSource,
     }
 
@@ -255,7 +261,6 @@ export function computeVisibleRange(
 
   let startIndex = 0
   for (let i = 0; i < blocks.length; i += 1) {
-    const top = blockTops[i]
     const bottom = i + 1 < blocks.length ? blockTops[i + 1] : totalHeight
     if (bottom >= viewportStart) {
       startIndex = i
@@ -267,7 +272,6 @@ export function computeVisibleRange(
   let endIndex = blocks.length
   for (let i = startIndex; i < blocks.length; i += 1) {
     const top = blockTops[i]
-    const bottom = i + 1 < blocks.length ? blockTops[i + 1] : totalHeight
     if (top > viewportEnd) {
       endIndex = i
       break
@@ -335,6 +339,32 @@ export function searchContent(model: MarkdownPreviewModel, query: string, limit 
     from = idx + Math.max(1, query.length)
   }
   return hits
+}
+
+/**
+ * 根据源码行号估算预览容器中的滚动位置（像素），即使目标块尚未挂载也能返回合理估计。
+ * measureHeights 为可选的真实测量高度映射，用于已挂载块的精确校正。
+ */
+export function getEstimatedPreviewTopForLine(
+  model: MarkdownPreviewModel,
+  line: number,
+  estimateBlockHeight: (block: PreviewBlock, index: number) => number,
+  measuredHeights?: Map<string, number>,
+): number | undefined {
+  const { blocks } = model
+  let cursor = 0
+  for (let i = 0; i < blocks.length; i += 1) {
+    const blk = blocks[i]
+    const h = measuredHeights?.get(blk.blockId) ?? estimateBlockHeight(blk, i)
+    if (line >= blk.startLine && line <= blk.endLine) {
+      const progress = blk.endLine > blk.startLine
+        ? (line - blk.startLine) / (blk.endLine - blk.startLine)
+        : 0
+      return cursor + h * progress
+    }
+    cursor += h
+  }
+  return cursor > 0 ? cursor : undefined
 }
 
 /* ----------------------------- 内部辅助 ----------------------------- */
@@ -423,59 +453,6 @@ function countLines(text: string): number {
 }
 
 /**
- * rawContent 与 normalizedContent 的差异只可能来自 LaTeX 定界符规范化，
- * 以及 BOM 前缀。此处用逐字符扫描的方式，根据 normalized 的 offset 反推 raw 中对应位置。
- * 对于阶段2原型，该函数足够准确；后续若规范化逻辑变复杂可改为维护偏移表。
- */
-function rawEquivalentOffset(
-  rawContent: string,
-  normalizedOffset: number,
-  normalizedContent: string,
-  _edge: 'start' | 'end',
-): number {
-  const rawLen = rawContent.length
-  const normLen = normalizedContent.length
-  if (normalizedOffset <= 0) return 0
-  if (normalizedOffset >= normLen) return rawLen
-
-  let r = 0
-  let n = 0
-  while (n < normalizedOffset && r < rawLen && n < normLen) {
-    const rc = rawContent.charCodeAt(r)
-    const nc = normalizedContent.charCodeAt(n)
-    if (rc === nc) {
-      r += 1
-      n += 1
-      continue
-    }
-    // CRLF <-> LF 对齐
-    if (rc === 13 /* \r */ && rawContent.charCodeAt(r + 1) === 10 /* \n */ && nc === 10 /* \n */) {
-      r += 2
-      n += 1
-      continue
-    }
-    // 规范化把 \[ / \] 换成 $$，每个替换长度不变，只可能在上下文不对齐时走回退
-    // BOM 前缀只在开头出现一次
-    if (r === 0 && rc === 0xfeff) {
-      r += 1
-      continue
-    }
-    // 未知差异：使用线性对齐兜底，按最小推进
-    r += 1
-    n += 1
-  }
-  return Math.min(rawLen, r)
-}
-
-function rawEquivalentEndOffset(
-  rawContent: string,
-  normalizedEndOffset: number,
-  normalizedContent: string,
-): number {
-  return rawEquivalentOffset(rawContent, normalizedEndOffset, normalizedContent, 'end')
-}
-
-/**
  * 对模型内部使用的 LaTeX 规范化；保持与生产 MarkdownPreview 中
  * normalizeLatexBlockDelimiters 相同语义，但不引入跨模块副作用缓存。
  */
@@ -516,7 +493,7 @@ function normalizeLatexForModel(markdown: string): string {
       if (index % 2 === 1) return part
       const currentLine = lineIndex++
       if (pairedDelimiterLines.has(currentLine)) {
-        return part.replace(/\\([\[\]])/, () => '$$')
+        return part.replace(/\\(\[|\])/, () => '$$')
       }
       if (/^\s{0,3}\\\[.*\\\]\s*$/.test(part)) {
         return part

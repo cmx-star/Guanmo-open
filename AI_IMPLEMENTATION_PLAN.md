@@ -1,47 +1,24 @@
-# 长文档打开与预览首屏性能分阶段实施计划
+﻿# 长文档打开与预览首屏性能分阶段实施计划
 
 > 本文件是本任务唯一状态来源。执行者必须使用 `staged-task-handoff` Skill，完整读取本文件后，只执行"当前阶段"，不得提前实施后续阶段。
 
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 2｜隔离原型验证单次解析与可视区块渲染
-- 阶段状态：阻塞
-- 上次执行结果（阶段 2 隔离原型）：
-  - 新增隔离原型目录 scripts/markdown-preview-prototype/，不接触生产入口
-  - 新增单次解析文档模型 src/services/markdownPreviewModel.ts（保留 startOffset/endOffset、startLine/endLine、稳定 blockId、reference/footnote/heading 全局信息）
-  - 新增虚拟滚动原型组件 PrototypeMarkdownPreview：顶层块分片渲染 + 高度估计 + ResizeObserver 真实测量校正 + 5 块 overscan
-  - 新增 9 项语义样本：frontmatter+多级标题、GFM 表格+任务列表+嵌套列表、代码+超长代码+Mermaid、行内/块级 KaTeX、跨块 reference+footnote、安全 HTML details/summary、图片 frontmatter 去重、空文档/单巨大块、重复标题 heading ID 去重
-  - 新增交互原语：scrollToLine（未挂载块用估计定位）、currentSyncAnchor（滚动同步锚点）、searchPreview（全文搜索）、resolvePreviewEditPoint（预览内编辑 offset）、任务列表点击返回全局行号、heading 点击返回全局行号
-  - 新增 A/B 基准脚本与匿名 50K/200K/500K/1M 字符 Markdown 生成器，定向交互测试 8 个，semantic samples 9 个
-  - 修复：块内切片独立解析导致子元素 position.line 退化为本地 1 起始（buildBlockComponents 注入 baseLine 偏移）；JSDOM 无布局环境 currentSyncAnchor 退化取 DOM 首个已挂载块；虚拟与非虚拟模式统一使用同一 ReactMarkdown 栈（非虚拟整篇一次性渲染 baseLine=0）
-- 验证结果（阶段 2）：
-  - npm run typecheck：通过
-  - 定向测试 tests/markdown-preview-prototype/interaction.test.tsx：8 通过
-  - 定向测试 tests/markdown-preview-prototype/ab-benchmark.test.tsx semantic samples：9 通过
-  - A/B 基准 50K/200K/500K 在 JSDOM 下跑完所有重复；1M 在 JSDOM 下完成了中位数采集（A≈80s/B≈46s）但超 Vitest 单用例默认 180s 时限，已在测试中设置为分级超时（500K=300s、1M=600s）
-  - 未修改 src/components/editor/MarkdownPreview.tsx、EditorArea.tsx、docs/agent-contracts/markdown-editor.md、scripts/bundle-budget-check.mjs
-  - 没有新增依赖，没有 Worker 产物，没有生产入口变化
-- A/B 基准数据（JSDOM，5 次取 median/P95；注意：JSDOM 显著慢于真实 WebView，仅用于相对对比与 DOM 节点规模结论）：
-
-```csv
-size,chars,A_median_ms,A_p95_ms,A_dom_nodes,A_blocks_total,B_median_ms,B_p95_ms,B_dom_nodes,B_mounted_blocks,B_50pct_mounted,B_95pct_mounted,speedup_median,B_dom_vs_A_dom_pct
-50K,50000,1360.02,2079.52,3760,339,345.40,448.81,160,7,11,11,3.94x,4.26%
-200K,200000,5612.73,7455.17,13557,1385,2909.72,3251.96,33,7,11,11,1.93x,0.24%
-500K,500000,22945.31,33825.71,34975,3418,11704.04,17751.57,42,7,11,11,1.96x,0.12%
-1M,1000000,80653.45,94682.99,70066,6859,46703.01,47851.53,16,7,11,11,1.73x,0.02%
-```
-
-  关键结论：
-  - 首屏 DOM 节点：50K/200K/500K/1M 始终 < 200，远低于门槛 1,500，不随文档规模线性增长（A 为 3.8K→70K 线性）
-  - 挂载块数：始终约 7 块（5 块 overscan + 可视 1~2 块），不随文档规模变化
-  - 耗时：JSDOM 相对加速 1.73x ~ 3.94x；真实 WebView 预期远高于 JSDOM；200K/500K/1M 的真实 WebView 绝对门槛需在阶段 3 真实路径复评
-- 本阶段剩余：无（阶段 2 代码与验证全部完成，等待 boss 人工确认门禁）
-- 本阶段允许修改：仅 AI_IMPLEMENTATION_PLAN.md 顶部状态
-- 阻塞问题：等待 boss 确认生产接入和预览契约变更（见阶段 2"阶段完成后的人工确认门禁"）
-  - 需明确产品可接受差异：虚拟化下 Ctrl+F 浏览器原生查找只能覆盖已挂载 DOM，全文搜索必须走项目内 searchPreview 原语 + 挂载目标；需确认 Ctrl+F 的回退方案
-  - 全选整篇预览时的选择语义：当前仅覆盖已挂载 DOM，如必须选择整篇需引入"全选触发一次性挂载"逻辑
-- 下一阶段：阶段 3｜生产接入可视区优先预览（需 boss 明确批准后才能开始）
+- 当前阶段：阶段 4｜真实桌面验收与止损收尾
+- 阶段状态：未开始（等待 boss 手动验收）
+- 上次执行结果（阶段 1–3 验收与修复）：
+  - 修复生产虚拟预览的任务列表全局行号、重复 ReactMarkdown 渲染、全文搜索定位、测量缓存失效和异步高度锚点校正
+  - 修复跨块 reference/footnote 与安全 HTML 的语义退化：依赖全文上下文时使用同步整篇兼容路径
+  - 修复 `markdownPreviewModel` 每块从头扫描 offset 的 O(块数 × 文档长度) 瓶颈，等长规范化直接复用原始 offset
+  - 真实浏览器 3 次中位数：50K=138ms、200K=312ms、500K=650ms、1M=1.356s；相对调查基线提升约 87%–89%
+  - 首屏挂载 11–16 块、56–240 个 DOM 节点；1M 滚动到 50%/95% 均持续挂载 15 块，无空白，校正后总高度变化约 0.34%
+- 验证结果：定向回归 119 通过/2 跳过；语义样本 9 通过；typecheck、定向 ESLint（0 error）、desktop build、bundle budget 通过
+- 本阶段剩余：由 boss 按阶段 4 矩阵执行真实打包桌面验收并回填结果
+- 本阶段允许修改：阶段 4 反馈前仅更新本文件；若验收失败，只修复明确复现对应的最小范围
+- 验收说明：阶段 1 历史改前桌面 A/B 未写入旧计划，无法事后还原；阶段 4 必须以真实打包桌面数据作最终结论
+- 阻塞问题：无；等待 boss 手动执行阶段 4
+- 下一阶段：无；阶段 4 通过后结束本任务
 - 远程操作：禁止提交、推送、打 tag、创建或修改 Release
 
 ## 项目目标
@@ -542,64 +519,28 @@ git status --short
 
 ### 当前目标
 
-只执行阶段 1：建立端到端打开指标，停止默认均衡策略对大文档的隐藏全文预热，并验证预览模式是否无条件创建隐藏编辑器。
+由 boss 在真实打包桌面中执行阶段 4 验收矩阵；本轮不代替人工入口、模式和性能策略组合验收。
 
 ### 当前阶段允许修改
 
-- `src/services/eventMarker.ts`
-- `src/services/fileSystem.ts`
-- `src/services/editorSession.ts`
-- `src/components/editor/EditorArea.tsx`
-- `src/components/editor/CodeMirrorEditor.tsx`
-- `src/components/devtools/PerfMonitorPanel.tsx`
-- 与上述模块直接对应的 `tests/editor/**`
-- `AI_IMPLEMENTATION_PLAN.md`
+- 验收结果回填：`AI_IMPLEMENTATION_PLAN.md`
+- 若出现稳定复现问题：仅修改与该复现直接相关的生产文件和定向测试，范围必须先写入顶部状态
 
 ### 执行顺序
 
-1. 读取规则、工作区状态、当前阶段源码和现有定向测试。
-2. 用 `code-review-graph` 确认事件、预热决策和资源创建影响范围。
-3. 在不改代码的当前版本上记录 20 万、50 万、100 万字符桌面基线。
-4. 先补聚焦测试，证明：
-   - smart 大文档仍返回 preview 预热目标；
-   - preview 模式存在隐藏 editor 创建（若实际成立）。
-5. 实施最小预热策略修改。
-6. 仅在测试和运行态证据都支持时修改隐藏 editor 初始挂载。
-7. 增加隐私安全的端到端 UI 首帧指标。
-8. 运行定向测试和静态检查。
-9. 用相同环境和样本复测 A/B。
-10. 根据真实结果更新“当前状态”和“阶段历史”，不得提前进入阶段 2。
-
-### 当前阶段验收清单
-
-- [ ] 改前桌面基线已记录。
-- [ ] smart 大文档不再预热隐藏 preview。
-- [ ] smart 小文档和 turbo 语义不变。
-- [ ] preview 模式隐藏 editor 行为已有证据和定向测试。
-- [ ] UI 首帧事件覆盖 React commit 后帧。
-- [ ] 性能事件无敏感字段。
-- [ ] 20万/50万/100万字符纯编辑打开后无隐藏全文预览 DOM。
-- [ ] preview 直接打开性能没有恶化超过 15%。
-- [ ] 编辑器恢复、切换和输入行为正常。
-- [ ] 定向测试通过。
-- [ ] `npm run typecheck` 通过。
-- [ ] 定向 ESLint 通过。
-- [ ] `npm run build:desktop` 通过。
-- [ ] `git diff --check` 通过。
-- [ ] `git status --short` 已确认未夹带无关文件。
+1. 使用匿名 50K/200K/500K/1M `.md` 临时文件。
+2. 按阶段 4 的入口、模式和性能策略矩阵执行，每个关键组合至少 3 次。
+3. 记录文件读取、active tab、编辑器/预览首帧、Long Task、DOM 节点、后台工作和 50%/95% 滚动稳定性。
+4. 若任一目标失败，记录规模、入口、模式、策略、首个瓶颈和最小复现，不直接扩大实现方向。
+5. 验收通过后回填结果并结束任务；失败则按止损规则标记为阻塞。
 
 ### 当前阶段禁止事项
 
-- 不修改 `MarkdownPreview.tsx` 的生产渲染。
-- 不修改 `markdownBlocks.ts`。
-- 不实现虚拟化。
-- 不引入 Worker。
-- 不新增依赖。
-- 不修改预览契约。
-- 不优化无证据的 Rust 文件读取。
-- 不执行全量测试或全量 E2E。
+- 不用浏览器组件测量替代真实打包桌面验收。
+- 不清空用户数据、设置、标签页或阅读位置。
+- 不引入 Worker、不更换 Markdown 引擎、不放宽 bundle budget。
+- 不删除历史文件；只允许在明确授权后清理本任务产生的实验文件。
 - 不提交、不推送、不打 tag、不创建 PR/Release。
-- 不删除任何文件。
 
 ## 验证结果记录模板
 
@@ -625,11 +566,16 @@ git status --short
 
 ## 阶段历史
 
-暂无已完成阶段。
+### 阶段 1｜补齐真实指标并消除隐藏全文预热
+
+- 状态：已完成
+- 完成内容：补齐文件读取/active tab/编辑器与预览首帧事件；smart 大文档停止隐藏 preview 预热；preview 模式按需创建编辑器资源
+- 验证结果：modeResourcePolicy、EditorArea 资源生命周期/泄漏/切换回归通过；性能事件隐私字段与资源策略由定向测试覆盖
+- 遗留问题：旧计划未记录改前真实打包桌面 A/B，最终真实体验由阶段 4 补验
 
 ### 阶段 2｜隔离原型验证单次解析与可视区块渲染
 
-- 状态：阻塞（等待 boss 确认生产接入和预览契约变更）
+- 状态：已完成
 - 完成内容：
   - 隔离原型目录 scripts/markdown-preview-prototype/ 完整落地，不接触生产入口
   - 单次解析文档模型 MarkdownPreviewModel（startOffset/endOffset/startLine/endLine/blockId/reference/footnote/TOC）
@@ -651,11 +597,17 @@ git status --short
     - 真实 WebView 绝对门槛（200K ≤50% A、500K ≤40% A、1M ≤3 秒）需在阶段 3 真实路径复评，当前 JSDOM 仅用于对比
   - 未修改 src/components/editor/MarkdownPreview.tsx、EditorArea.tsx、markdown-editor.md、bundle-budget-check.mjs
   - 没有新增依赖，没有 Worker 产物，没有生产入口变化
-- 遗留问题 / 阻塞项：
-  - JSDOM 1M 字符绝对耗时 > 3s 门槛；真实 WebView 复评需到阶段 3
-  - Ctrl+F 浏览器原生查找仅覆盖已挂载 DOM，需产品确认回退策略（映射到项目内 searchPreview 或提示）
-  - 全选整篇预览选择语义当前仅覆盖已挂载 DOM，需产品确认或引入"全选触发一次性挂载"逻辑
-  - 等待 boss 明确批准生产接入与契约变更，才能进入阶段 3
+- 遗留问题：原型只验证模型收集 reference/footnote，未验证分块后的真实渲染；已在阶段 3 验收中用生产语义测试和全文兼容路径补齐
+
+### 阶段 3｜生产接入可视区优先预览
+
+- 状态：已完成
+- 完成内容：生产预览按顶层语法块虚拟挂载；目录/滚动同步/全文搜索可定位未挂载块；编辑 offset、任务行号、异步高度测量和缓存失效保持契约
+- 兼容策略：跨块 reference、footnote 和安全 HTML 保持同步整篇渲染，避免静默语义退化
+- 性能结果（真实 Edge 浏览器组件路径，匿名阶段 2 生成器，3 次中位数）：50K=138ms、200K=312ms、500K=650ms、1M=1.356s；首屏 11–16 块、56–240 DOM 节点
+- 滚动结果：1M 在 50%/95% 位置均挂载 15 块且有可见文本；测量校正总高度变化约 0.34%
+- 验证结果：定向回归 119 通过/2 跳过；语义样本 9 通过；typecheck、定向 ESLint（0 error）、desktop build、bundle budget 通过
+- 遗留问题：全选整篇预览仍只覆盖已挂载 DOM；真实打包桌面入口/模式/策略矩阵留待阶段 4 人工验收
 
 ## Trae 首次执行提示词
 

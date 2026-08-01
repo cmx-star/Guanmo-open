@@ -21,7 +21,6 @@ import {
   computeVisibleRange,
   createMarkdownPreviewModel,
   findBlockIndexByLine,
-  findBlockIndexByOffset,
   searchContent,
   type MarkdownPreviewModel,
   type PreviewBlock,
@@ -147,7 +146,7 @@ export const PrototypeMarkdownPreview = memo(function PrototypeMarkdownPreview({
     if (!virtualize) {
       // 路径 A：整篇挂载（与当前生产等价，但仍通过 model.blocks 保留 offset 语义）
       const totalH = model.blocks.reduce(
-        (acc, b, i) => acc + (measuredHeightsRef.current.get(b.blockId) ?? estimateBlockHeight(b)),
+        (acc, b) => acc + (measuredHeightsRef.current.get(b.blockId) ?? estimateBlockHeight(b)),
         0,
       )
       const tops: number[] = []
@@ -501,8 +500,7 @@ function getText(node: React.ReactNode): string {
 function countDescendantNodes(el: Element): number {
   let n = 0
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT)
-  let cur: Node | null = walker.currentNode
-  while ((cur = walker.nextNode())) n += 1
+  while (walker.nextNode()) n += 1
   return n
 }
 

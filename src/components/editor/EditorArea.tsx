@@ -19,7 +19,7 @@ import { eventMarker } from '@/services/eventMarker'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { EditorContextMenu } from './EditorContextMenu'
 import { MarkdownDiffView } from './MarkdownDiffView'
-import { MarkdownPreview, MarkdownToc, type MarkdownBlockCommitRequest } from './MarkdownPreview'
+import { MarkdownPreview, MarkdownToc, type MarkdownBlockCommitRequest, type MarkdownPreviewHandle } from './MarkdownPreview'
 import { SearchOverlay } from './SearchOverlay'
 import { TabBar } from './TabBar'
 import { replaceMarkdownBlock } from '@/services/markdownBlocks'
@@ -182,6 +182,8 @@ export function EditorArea() {
   const readingPositionsRef = useRef<ReadingPositionSession>(seedReadingPositionsFromStore())
   const leftPreviewRef = useRef<HTMLDivElement>(null)
   const rightPreviewRef = useRef<HTMLDivElement>(null)
+  const leftMarkdownPreviewRef = useRef<MarkdownPreviewHandle>(null)
+  const rightMarkdownPreviewRef = useRef<MarkdownPreviewHandle>(null)
   const previewAnchorCacheRef = useRef<WeakMap<HTMLElement, PreviewAnchorCache>>(new WeakMap())
   const isRestoringScrollRef = useRef(false)
   const restoreScrollFrameRef = useRef<number | null>(null)
@@ -1028,8 +1030,9 @@ export function EditorArea() {
     // 从 tabId key 读取位置，与编辑器共用同一个位置
     const position = readingPositionsRef.current.get(tabId)
     if (!container) return
+    const previewHandle = pane === 'left' ? leftMarkdownPreviewRef.current : rightMarkdownPreviewRef.current
     const lineTop = position?.previewScrollTop == null && position?.topLine != null
-      ? getPreviewTopForLine(container, position.topLine)
+      ? getPreviewTopForLine(container, position.topLine, previewHandle?.getTopForLine(position.topLine))
       : undefined
     const nextTop = position?.previewScrollTop
       ?? (typeof lineTop === 'number' ? Math.max(0, lineTop - SCROLL_SYNC_TOP_OFFSET) : 0)
@@ -1249,7 +1252,7 @@ export function EditorArea() {
     const container = leftPreviewRef.current
     if (!container) return
 
-    const targetTop = getPreviewTopForLine(container, line)
+    const targetTop = getPreviewTopForLine(container, line, leftMarkdownPreviewRef.current?.getTopForLine(line))
     if (typeof targetTop !== 'number') return
 
     setScrollSyncSource('editor')
@@ -1530,19 +1533,11 @@ export function EditorArea() {
   }, [handleInsertImagePaths])
 
   const jumpToPreviewHeading = useCallback((item: TocItem) => {
-    const container = leftPreviewRef.current
-    const heading = container?.querySelector<HTMLElement>(`[data-md-line="${item.line}"]`)
-    if (!container || !heading) return
-    const targetTop = heading.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 24
-    container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+    leftMarkdownPreviewRef.current?.scrollToLine(item.line)
   }, [])
 
   const jumpToRightPreviewHeading = useCallback((item: TocItem) => {
-    const container = rightPreviewRef.current
-    const heading = container?.querySelector<HTMLElement>(`[data-md-line="${item.line}"]`)
-    if (!container || !heading) return
-    const targetTop = heading.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 24
-    container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+    rightMarkdownPreviewRef.current?.scrollToLine(item.line)
   }, [])
 
   const dualPreviewTocSections = useMemo(() => {
@@ -1795,10 +1790,22 @@ export function EditorArea() {
 
   const getSearchProps = () => {
     if (viewMode === 'edit' || viewMode === 'edit-preview') return { editorViewRef }
-    const panes: React.RefObject<HTMLDivElement>[] = []
-    if (leftPreviewVisible && leftPreviewRef.current) panes.push(leftPreviewRef)
-    if (viewMode === 'dual-preview' && rightPreviewRef.current) panes.push(rightPreviewRef)
-    return { previewPanes: panes }
+    const previewSources = []
+    if (leftPreviewVisible && leftPreviewRef.current) {
+      previewSources.push({
+        content: leftPreviewRenderRef.current.content,
+        paneRef: leftPreviewRef,
+        previewRef: leftMarkdownPreviewRef,
+      })
+    }
+    if (viewMode === 'dual-preview' && rightPreviewRef.current && rightTab) {
+      previewSources.push({
+        content: rightPreview.content,
+        paneRef: rightPreviewRef,
+        previewRef: rightMarkdownPreviewRef,
+      })
+    }
+    return { previewSources }
   }
 
   return (
@@ -1879,6 +1886,7 @@ export function EditorArea() {
               >
                 {viewMode === 'dual-preview' && <PaneHeader title={activeTab?.title || ''} />}
                 <MarkdownPreview
+                  ref={leftMarkdownPreviewRef}
                   content={leftPreviewRenderRef.current.content}
                   filePath={leftPreviewRenderRef.current.filePath}
                   fontSize={editorFontSize}
@@ -1924,6 +1932,7 @@ export function EditorArea() {
               />
               {rightTab ? (
                 <MarkdownPreview
+                  ref={rightMarkdownPreviewRef}
                   content={rightPreview.content}
                   filePath={rightTab.filePath}
                   fontSize={editorFontSize}
@@ -2082,7 +2091,8 @@ function getCachedPreviewAnchors(
 
 function getPreviewTopForLine(
   container: HTMLElement,
-  line: number
+  line: number,
+  estimatedTop?: number
 ): number | undefined {
   let previousElement: HTMLElement | undefined
   let previousLine = -1
@@ -2102,7 +2112,7 @@ function getPreviewTopForLine(
   }
 
   const anchorElement = previousElement ?? nextElement
-  if (!anchorElement) return undefined
+  if (!anchorElement) return estimatedTop
   const containerTop = container.getBoundingClientRect().top
   const anchorRect = anchorElement.getBoundingClientRect()
   const anchorTop = anchorRect.top - containerTop + container.scrollTop
@@ -2118,7 +2128,7 @@ function getPreviewTopForLine(
     return anchorTop + (nextTop - anchorTop) * Math.max(0, Math.min(1, progress))
   }
 
-  return anchorTop
+  return estimatedTop ?? anchorTop
 }
 
 function reportPreviewSwitchPerformance(tabId: string, restoreStartedAt: number) {

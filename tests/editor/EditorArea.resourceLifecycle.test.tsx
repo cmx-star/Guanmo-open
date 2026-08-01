@@ -297,10 +297,10 @@ describe('Real component TTL lifecycle', () => {
 // 2. Real right preview pending/conflict integration
 // ============================================================
 describe('Right preview pending/conflict', () => {
-  /** Find a block in the right preview pane (second .overflow-auto.select-text in dual-preview). */
+  /** Find a block in the right preview pane (second scrollable preview in dual-preview). */
   function altClickRightBlock(container: HTMLElement, blockIndex: number) {
-    const panes = container.querySelectorAll('.overflow-auto.select-text.bg-gm-surface')
-    // In dual-preview mode the right pane is the second .overflow-auto.select-text
+    const panes = container.querySelectorAll('.overflow-y-auto.select-text.bg-gm-surface')
+    // In dual-preview mode the right pane is the second scrollable preview.
     const rightPane = panes[panes.length - 1] as HTMLElement | undefined
     if (!rightPane) throw new Error('Right preview pane not found')
     const wrapper = rightPane.querySelector(`[data-md-block-index="${blockIndex}"]`)
