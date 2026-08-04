@@ -19,6 +19,7 @@ import {
 } from './services/sessionRestore'
 import { useEditorStore } from './stores/editorStore'
 import { isTauri } from './hooks/useTauri'
+import { useUsageTracking } from './hooks/useUsageTracking'
 import { GlobalTooltip } from './components/common/Tooltip'
 import { migrateLegacyFileAccess } from './services/persistedFileAccess'
 import { UpdateManager } from './components/update/UpdateManager'
@@ -296,6 +297,7 @@ function App() {
   const theme = useSettingsStore((s) => s.appearance.theme)
   const lightPalette = useSettingsStore((s) => s.appearance.lightPalette)
   useExternalFileOpen(appReady)
+  useUsageTracking(appReady)
 
   // 调试用：控制台调用 __testLegacyModal() 唤起旧版数据检测弹窗
   useEffect(() => {

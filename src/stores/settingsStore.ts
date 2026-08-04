@@ -52,12 +52,17 @@ interface KnowledgeSettings {
   autoIndexEnabled: boolean
 }
 
+interface UsageTrackingSettings {
+  enabled: boolean
+}
+
 interface SettingsState {
   ai: AiConfig
   editor: EditorSettings
   appearance: AppearanceSettings
   webSearch: WebSearchConfig
   knowledge: KnowledgeSettings
+  usageTracking: UsageTrackingSettings
   aiShortcutActions: AiShortcutAction[]
   customChatPresets: CustomPreset[]
   customEmbeddingPresets: CustomPreset[]
@@ -68,6 +73,7 @@ interface SettingsState {
   updateAppearanceSettings: (settings: Partial<AppearanceSettings>) => void
   updateWebSearchConfig: (config: Partial<WebSearchConfig>) => void
   updateKnowledgeSettings: (settings: Partial<KnowledgeSettings>) => void
+  updateUsageTrackingSettings: (settings: Partial<UsageTrackingSettings>) => void
   setAiShortcutActions: (actions: AiShortcutAction[]) => void
   resetAiShortcutActions: () => void
   addCustomChatPreset: (preset: CustomPreset) => void
@@ -119,6 +125,10 @@ const DEFAULT_KNOWLEDGE_SETTINGS: KnowledgeSettings = {
   autoIndexEnabled: true,
 }
 
+const DEFAULT_USAGE_TRACKING_SETTINGS: UsageTrackingSettings = {
+  enabled: true,
+}
+
 const THEME_SWITCH_THROTTLE_MS = 180
 let lastThemeSwitchAt = 0
 
@@ -137,6 +147,7 @@ export const useSettingsStore = create<SettingsState>()(
       appearance: DEFAULT_APPEARANCE_SETTINGS,
       webSearch: DEFAULT_WEB_SEARCH,
       knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
+      usageTracking: DEFAULT_USAGE_TRACKING_SETTINGS,
       aiShortcutActions: createDefaultAiShortcutActions(),
       customChatPresets: [],
       customEmbeddingPresets: [],
@@ -172,6 +183,9 @@ export const useSettingsStore = create<SettingsState>()(
           cancelPendingIndexTimers(getPendingIndexTimerPaths())
         }
       },
+
+      updateUsageTrackingSettings: (settings) =>
+        set((s) => ({ usageTracking: { ...s.usageTracking, ...settings } })),
 
       setAiShortcutActions: (actions) =>
         set({ aiShortcutActions: actions.map((action) => ({ ...action })) }),
@@ -342,6 +356,10 @@ export const useSettingsStore = create<SettingsState>()(
           knowledge: {
             ...current.knowledge,
             ...(saved.knowledge || {}),
+          },
+          usageTracking: {
+            ...current.usageTracking,
+            ...(saved.usageTracking || {}),
           },
           aiShortcutActions: Object.prototype.hasOwnProperty.call(saved, 'aiShortcutActions')
             ? normalizeAiShortcutActions(saved.aiShortcutActions)
