@@ -19,6 +19,7 @@ export function StatusBar() {
   const tabs = useEditorStore((s) => s.tabs)
   const activeTabId = useEditorStore((s) => s.activeTabId)
   const aiStatus = useAppStore((s) => s.aiStatus)
+  const toggleAiPanel = useAppStore((s) => s.toggleAiPanel)
 
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
@@ -61,7 +62,7 @@ export function StatusBar() {
         </>
       )}
 
-      <StatusItem className="gap-1.5">
+      <StatusItem className="gap-1.5 cursor-pointer" onClick={toggleAiPanel}>
         <div className={`w-2 h-2 rounded-full ${STATUS_MAP[aiStatus]?.color ?? STATUS_MAP.unchecked.color}`} />
         <span>{STATUS_MAP[aiStatus]?.label ?? STATUS_MAP.unchecked.label}</span>
       </StatusItem>
@@ -72,12 +73,17 @@ export function StatusBar() {
 function StatusItem({
   children,
   className = '',
+  onClick,
 }: {
   children: React.ReactNode
   className?: string
+  onClick?: () => void
 }) {
   return (
-    <span className={`flex items-center gap-1.5 select-none cursor-default hover:text-gm-text transition-colors ${className}`}>
+    <span
+      className={`flex items-center gap-1.5 select-none cursor-default hover:text-gm-text transition-colors ${className}`}
+      onClick={onClick}
+    >
       {children}
     </span>
   )
