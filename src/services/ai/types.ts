@@ -48,7 +48,19 @@ export interface ChatMessageContextMeta {
   tagCount: number
   ragSourceCount: number
   webSearchUsed: boolean
+  readingScope?: ReadingScope
+  sourceCoverage?: ReadingSourceCoverage
 }
+
+export type ReadingScope = 'selection' | 'section' | 'document' | 'workspace'
+
+export type ReadingSourceCoverage =
+  | 'selected_range'
+  | 'section_chunks'
+  | 'document_full'
+  | 'document_partial'
+  | 'workspace_topk'
+  | 'none'
 
 export interface LocalChatMessageSource {
   kind?: 'local'

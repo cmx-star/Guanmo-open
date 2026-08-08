@@ -1381,7 +1381,7 @@ function GeneralSettings() {
     setBusy(true)
     try {
       const result = await importDataBackup()
-      toast.success(`已导入 ${result.sessions} 个会话、${result.messages} 条消息、${result.memories} 条记忆`)
+      toast.success(`已导入 ${result.sessions} 个会话、${result.messages} 条消息、${result.memories} 条记忆、${result.artifacts} 条阅读成果`)
     } catch (err) {
       if ((err as Error).message !== '已取消导入') {
         toast.error(err instanceof Error ? err.message : '导入失败')

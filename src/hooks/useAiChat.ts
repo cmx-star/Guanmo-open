@@ -22,7 +22,12 @@ import { hydrateSettingsSecrets } from '@/services/settingsSecrets'
 import { singletonManager, SINGLETON_IDS } from '@/services/singletonPromise'
 import { promoteTask } from '@/services/idleScheduler'
 import { buildAgentRunRequest, buildRoutingAppContext } from '@/services/agent/requestBuilder'
-import { buildAgentResultPresentation, toLocalMessageSources } from '@/services/agent/sourceMetadata'
+import {
+  buildScopedAgentResultPresentation,
+  resolveReadingSourceCoverage,
+  toContextTagSources,
+  toLocalMessageSources,
+} from '@/services/agent/sourceMetadata'
 
 function getAgentProgressText(step: AgentStep): string {
   if (step.type === 'progress') {
@@ -451,7 +456,11 @@ export function useAiChat() {
             if (!isCurrentRequest()) return
             handleAgentStep(step)
           }
-          const presentation = buildAgentResultPresentation(result, tagMetadata.length)
+          const presentation = buildScopedAgentResultPresentation(
+            result,
+            tagMetadata.length,
+            routingDecision.readingScope,
+          )
           const updateAgentSourceMetadata = () => {
             if (!isCurrentRequest()) return
             updateMessageContextMeta(assistantMessageId, presentation.contextMeta)
@@ -617,13 +626,23 @@ export function useAiChat() {
         answerMode: resolveAiAnswerMode(selectionRequestKind, useAgentMode),
       })
 
+      const ragMessageSources = toLocalMessageSources(useChatStore.getState().ragSources)
+      const tagMessageSources = routingDecision.readingScope === 'selection'
+        ? toContextTagSources(contextTags || [])
+        : []
+      const messageSources = ragMessageSources.length > 0 ? ragMessageSources : tagMessageSources
       const contextMeta = createContextMeta({
         tagCount: tagMetadata.length,
         ragSourceCount: countRagSourcesInContext(ragContext),
         webSearchUsed: false,
+        readingScope: routingDecision.readingScope,
+        sourceCoverage: resolveReadingSourceCoverage(
+          routingDecision.readingScope,
+          [],
+          messageSources.length,
+        ),
       })
       if (isCurrentRequest()) updateMessageContextMeta(assistantMessageId, contextMeta)
-      const messageSources = toLocalMessageSources(useChatStore.getState().ragSources)
       if (isCurrentRequest() && messageSources.length > 0) {
         updateMessageSources(assistantMessageId, messageSources)
       }

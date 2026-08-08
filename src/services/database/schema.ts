@@ -124,6 +124,27 @@ CREATE TABLE IF NOT EXISTS legacy_idb_detection (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- Structured reading artifacts (summaries, question sets, annotations, notes, flashcards)
+CREATE TABLE IF NOT EXISTS reading_artifacts (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL CHECK (type IN ('summary', 'question_set', 'annotation', 'flashcard_set', 'note')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  structured_content TEXT,
+  source_file_path TEXT,
+  source_file_name TEXT,
+  source_content_hash TEXT,
+  source_heading_path TEXT,
+  source_start_line INTEGER,
+  source_end_line INTEGER,
+  source_quote TEXT,
+  source_message_id TEXT,
+  source_scope TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
@@ -132,6 +153,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_parent_id ON chat_messages(parent_i
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
 CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_reading_artifacts_type ON reading_artifacts(type);
+CREATE INDEX IF NOT EXISTS idx_reading_artifacts_status ON reading_artifacts(status);
+CREATE INDEX IF NOT EXISTS idx_reading_artifacts_source ON reading_artifacts(source_file_path);
 `
 
 export const DB_MIGRATIONS = [

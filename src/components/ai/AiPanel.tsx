@@ -15,9 +15,27 @@ import { useEditorStore } from '@/stores/editorStore'
 import { deleteChatSession } from '@/services/database/persistence'
 import { isSameFilePath } from '@/services/pathIdentity'
 import { toast } from '@/services/toast'
-import type { ChatMessageSource, LocalChatMessageSource } from '@/services/ai/types'
+import type {
+  ChatMessageContextMeta,
+  ChatMessageSource,
+  LocalChatMessageSource,
+  ReadingScope,
+} from '@/services/ai/types'
 import { AI_SHORTCUT_SUBMIT_EVENT } from '@/services/aiContext'
 import { applyPendingEditCommand } from '@/services/pendingEditCommand'
+import { saveAssistantMessageAsMarkdown } from '@/services/assistantMessageExport'
+import { useReadingArtifactsStore, type ReadingArtifactFilter } from '@/stores/readingArtifactsStore'
+import {
+  type ReadingArtifact,
+  type ReadingArtifactType,
+  type SourceAnchorStatus,
+  type AnnotationStructuredContent,
+  type FlashcardStructuredContent,
+  getAnnotationStructuredContent,
+  getFlashcardStructuredContent,
+  parseFlashcardCandidates,
+  resolveAnnotationPosition,
+} from '@/services/database/readingArtifacts'
 
 type AiPanelProps = {
   fullscreenDragHandleProps?: {
@@ -52,6 +70,22 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const visibleMessages = useMemo(() => messages.filter((msg) => !msg.hidden), [messages])
   const [reasoningMode, setReasoningMode] = useState<'off' | 'on'>('off')
   const [resetManualToggle, setResetManualToggle] = useState(0)
+  const [panelView, setPanelView] = useState<'chat' | 'artifacts'>('chat')
+  const artifacts = useReadingArtifactsStore((s) => s.artifacts)
+  const artifactsLoading = useReadingArtifactsStore((s) => s.loading)
+  const artifactFilter = useReadingArtifactsStore((s) => s.filter)
+  const setArtifactFilter = useReadingArtifactsStore((s) => s.setFilter)
+  const loadArtifacts = useReadingArtifactsStore((s) => s.loadArtifacts)
+  const deleteArtifact = useReadingArtifactsStore((s) => s.deleteArtifact)
+  const saveArtifactFromMessage = useReadingArtifactsStore((s) => s.saveArtifactFromMessage)
+  const anchorStatuses = useReadingArtifactsStore((s) => s.anchorStatuses)
+  const checkAnchor = useReadingArtifactsStore((s) => s.checkAnchor)
+
+  useEffect(() => {
+    if (panelView === 'artifacts') {
+      loadArtifacts()
+    }
+  }, [panelView, loadArtifacts])
 
   // 检测是否在底部（距离底部 50px 以内视为底部）
   const isAtBottom = useCallback(() => {
@@ -238,6 +272,148 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     }
   }, [])
 
+  const handleOpenArtifactSource = useCallback(async (artifact: ReadingArtifact) => {
+    const source = artifact.source
+    if (!source?.filePath) {
+      toast.error('该成果未绑定来源文件')
+      return
+    }
+    const anchorLines = source.startLine && source.endLine
+      ? { startLine: source.startLine, endLine: source.endLine }
+      : null
+    // 批注按 Markdown model/source offset 定位；其他类型直接用锚点行号。
+    const annotation = artifact.type === 'annotation'
+      ? getAnnotationStructuredContent(artifact)
+      : null
+    try {
+      const editorState = useEditorStore.getState()
+      const existing = editorState.tabs.find((tab) => isSameFilePath(tab.filePath, source.filePath))
+      let tabId = existing?.id
+      let content = existing?.content ?? ''
+      if (!tabId) {
+        content = await readRememberedFile(source.filePath)
+        const name = source.filePath.split(/[/\\]/).pop() || source.filePath
+        editorState.addTab(source.filePath, name, content)
+        tabId = useEditorStore.getState().activeTabId || undefined
+      } else {
+        editorState.setActiveTab(tabId)
+      }
+      if (!tabId) return
+      editorState.setViewMode('edit')
+      // 批注：用当前文档内容解析定位（基于 Markdown model，不遍历 DOM）
+      let revealStart = anchorLines?.startLine
+      let revealEnd = anchorLines?.endLine
+      if (annotation) {
+        const position = resolveAnnotationPosition(content, annotation, source)
+        if (position) {
+          revealStart = position.startLine
+          revealEnd = position.endLine
+        }
+      }
+      if (revealStart && revealEnd) {
+        editorState.requestReveal(tabId, revealStart, revealEnd)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '打开来源失败')
+    }
+  }, [])
+
+  const handleSaveAssistantAsMarkdown = useCallback(async (content: string, sources?: ChatMessageSource[]) => {
+    await saveAssistantMessageAsMarkdown(content, sources)
+  }, [])
+
+  const handleSaveAssistantAsArtifact = useCallback(async (
+    type: ReadingArtifactType,
+    content: string,
+    sources: ChatMessageSource[] | undefined,
+    contextMeta: ChatMessageContextMeta | undefined,
+    messageId: string | undefined,
+  ) => {
+    const trimmed = content.trim()
+    if (!trimmed) return
+
+    // 知识卡片：先解析候选；解析失败保留原回答并提示，不保存残缺卡片
+    if (type === 'flashcard_set') {
+      const cards = parseFlashcardCandidates(trimmed)
+      if (!cards || cards.length === 0) {
+        toast.error('未识别到合法知识卡片，请让 AI 用问答格式或 ```flashcard 卡片块输出')
+        return
+      }
+      const title = cards[0].front.length > 40 ? `${cards[0].front.slice(0, 40)}…` : cards[0].front
+      try {
+        const saved = await saveArtifactFromMessage({
+          type,
+          title,
+          content: trimmed,
+          sources,
+          contextScope: contextMeta?.readingScope,
+          messageId,
+          structuredContent: { cards },
+        })
+        if (saved) {
+          toast.success(`已保存 ${cards.length} 张知识卡片`)
+        } else {
+          toast.error('保存知识卡片失败')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '保存知识卡片失败')
+      }
+      return
+    }
+
+    // 批注：必须有本地来源锚点；批注正文为 AI 回答，引用快照取来源标题或行号
+    if (type === 'annotation') {
+      const localSource = sources?.find((s): s is LocalChatMessageSource => s.kind !== 'web')
+      if (!localSource || !localSource.filePath) {
+        toast.error('批注需要绑定本地来源，请先选择带文件来源的回答')
+        return
+      }
+      const quote = localSource.heading
+        || formatSourceHeading(localSource)
+        || `${localSource.fileName} L${localSource.startLine}-${localSource.endLine}`
+      const structured: AnnotationStructuredContent = { quote, note: trimmed }
+      const title = quote.length > 40 ? `${quote.slice(0, 40)}…` : quote
+      try {
+        const saved = await saveArtifactFromMessage({
+          type,
+          title,
+          content: trimmed,
+          sources,
+          contextScope: contextMeta?.readingScope,
+          messageId,
+          structuredContent: structured,
+        })
+        if (saved) {
+          toast.success('已保存为批注')
+        } else {
+          toast.error('保存批注失败')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '保存批注失败')
+      }
+      return
+    }
+
+    const title = deriveArtifactTitle(type, trimmed)
+    try {
+      const saved = await saveArtifactFromMessage({
+        type,
+        title,
+        content: trimmed,
+        sources,
+        contextScope: contextMeta?.readingScope,
+        messageId,
+      })
+      if (saved) {
+        toast.success(`已保存为${ARTIFACT_TYPE_LABELS[type]}`)
+      } else {
+        toast.error('保存阅读成果失败')
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '保存阅读成果失败')
+    }
+  }, [saveArtifactFromMessage])
+
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     const confirmed = window.confirm('确认删除这组历史会话吗？删除后不可恢复。')
     if (!confirmed) return
@@ -270,7 +446,19 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
         </div>
         <div className="flex-1" />
         <div className="flex items-center" onPointerDown={(e) => e.stopPropagation()}>
-          {messages.length > 0 && (
+          <Button
+            type={panelView === 'artifacts' ? 'default' : 'text'}
+            size="small"
+            onClick={() => setPanelView(panelView === 'artifacts' ? 'chat' : 'artifacts')}
+            title={panelView === 'artifacts' ? '返回对话' : '阅读成果'}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+              </svg>
+            }
+          />
+          {panelView === 'chat' && messages.length > 0 && (
             <Button
               type="text"
               size="small"
@@ -301,7 +489,19 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
 
       {/* Chat Content - 可以滚动到控制栏下面 */}
       <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden min-w-0 pb-32 bg-gm-surface">
-        {visibleMessages.length === 0 ? (
+        {panelView === 'artifacts' ? (
+          <ReadingArtifactsPanel
+            artifacts={artifacts}
+            loading={artifactsLoading}
+            filter={artifactFilter}
+            onFilterChange={setArtifactFilter}
+            onDelete={deleteArtifact}
+            onOpenSource={handleOpenRagSource}
+            onOpenArtifactSource={handleOpenArtifactSource}
+            anchorStatuses={anchorStatuses}
+            onCheckAnchor={checkAnchor}
+          />
+        ) : visibleMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-6 animate-fadeIn">
             {hasMoreHistory && (
               <button
@@ -355,8 +555,29 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                   content={msg.displayContent ?? msg.content}
                   isLast={i === visibleMessages.length - 1}
                   streaming={streaming}
+                  contextMeta={msg.contextMeta}
                   sources={msg.sources}
                   onOpenSource={handleOpenRagSource}
+                  onSaveAsMarkdown={
+                    msg.role === 'assistant'
+                      && Boolean((msg.displayContent ?? msg.content).trim())
+                      && !(i === visibleMessages.length - 1 && streaming)
+                      ? () => handleSaveAssistantAsMarkdown(msg.displayContent ?? msg.content, msg.sources)
+                      : undefined
+                  }
+                  onSaveAsArtifact={
+                    msg.role === 'assistant'
+                      && Boolean((msg.displayContent ?? msg.content).trim())
+                      && !(i === visibleMessages.length - 1 && streaming)
+                      ? (type) => handleSaveAssistantAsArtifact(
+                          type,
+                          msg.displayContent ?? msg.content,
+                          msg.sources,
+                          msg.contextMeta,
+                          msg.id,
+                        )
+                      : undefined
+                  }
                 />
                 {msg.role === 'assistant' && msg.editConfirmation && (
                   <div className="mt-2">
@@ -405,13 +626,299 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
       </div>
 
       {/* Prompt Composer */}
-      <PromptComposer
-        onSend={handleSend}
-        streaming={streaming}
-        onCancel={cancelStream}
-        onReasoningModeChange={setReasoningMode}
-        resetManualToggle={resetManualToggle}
-      />
+      {panelView === 'chat' && (
+        <PromptComposer
+          onSend={handleSend}
+          streaming={streaming}
+          onCancel={cancelStream}
+          onReasoningModeChange={setReasoningMode}
+          resetManualToggle={resetManualToggle}
+        />
+      )}
+    </div>
+  )
+}
+
+const ARTIFACT_FILTER_OPTIONS: Array<{ value: ReadingArtifactFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'summary', label: '摘要' },
+  { value: 'question_set', label: '问题集' },
+  { value: 'annotation', label: '批注' },
+  { value: 'flashcard_set', label: '卡片' },
+  { value: 'note', label: '笔记' },
+]
+
+function ReadingArtifactsPanel({
+  artifacts,
+  loading,
+  filter,
+  onFilterChange,
+  onDelete,
+  onOpenSource,
+  onOpenArtifactSource,
+  anchorStatuses,
+  onCheckAnchor,
+}: {
+  artifacts: ReadingArtifact[]
+  loading: boolean
+  filter: ReadingArtifactFilter
+  onFilterChange: (filter: ReadingArtifactFilter) => void
+  onDelete: (id: string) => void | Promise<void>
+  onOpenSource: (source: { filePath: string; startLine: number; endLine: number }) => void | Promise<void>
+  onOpenArtifactSource: (artifact: ReadingArtifact) => void | Promise<void>
+  anchorStatuses: Record<string, SourceAnchorStatus>
+  onCheckAnchor: (artifact: ReadingArtifact) => void | Promise<void>
+}) {
+  const visible = filter === 'all' ? artifacts : artifacts.filter((a) => a.type === filter)
+
+  return (
+    <div className="p-3 space-y-3 animate-fadeIn">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {ARTIFACT_FILTER_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onFilterChange(option.value)}
+            className={`px-2.5 py-1 rounded-full text-micro font-bold border transition-colors ${
+              filter === option.value
+                ? 'bg-gm-primary text-white border-gm-primary'
+                : 'bg-gm-surface text-gm-text-secondary border-gm-border hover:bg-gm-surface-hover'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+        <span className="ml-auto text-micro text-gm-text-tertiary">{visible.length} 条</span>
+      </div>
+
+      {loading ? (
+        <div className="text-center text-caption text-gm-text-tertiary py-8">加载中...</div>
+      ) : visible.length === 0 ? (
+        <div className="text-center text-caption text-gm-text-tertiary py-12">
+          <p className="font-bold text-gm-text-secondary mb-1">还没有阅读成果</p>
+          <p>在 AI 回答上点击「摘要 / 问题集 / 批注 / 卡片 / 笔记」即可保存</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visible.map((artifact) => (
+            <ReadingArtifactCard
+              key={artifact.id}
+              artifact={artifact}
+              anchorStatus={anchorStatuses[artifact.id]}
+              onDelete={onDelete}
+              onOpenSource={onOpenSource}
+              onOpenArtifactSource={onOpenArtifactSource}
+              onCheckAnchor={onCheckAnchor}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReadingArtifactCard({
+  artifact,
+  anchorStatus,
+  onDelete,
+  onOpenSource,
+  onOpenArtifactSource,
+  onCheckAnchor,
+}: {
+  artifact: ReadingArtifact
+  anchorStatus?: SourceAnchorStatus
+  onDelete: (id: string) => void | Promise<void>
+  onOpenSource: (source: { filePath: string; startLine: number; endLine: number }) => void | Promise<void>
+  onOpenArtifactSource: (artifact: ReadingArtifact) => void | Promise<void>
+  onCheckAnchor: (artifact: ReadingArtifact) => void | Promise<void>
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (artifact.source?.filePath && anchorStatus === undefined) {
+      onCheckAnchor(artifact)
+    }
+  }, [artifact, anchorStatus, onCheckAnchor])
+
+  const annotation = artifact.type === 'annotation'
+    ? getAnnotationStructuredContent(artifact)
+    : null
+  const flashcards = artifact.type === 'flashcard_set'
+    ? getFlashcardStructuredContent(artifact)
+    : null
+
+  const sourceLabel = artifact.source?.fileName
+    ? [
+        artifact.source.fileName,
+        artifact.source.headingPath?.length ? artifact.source.headingPath.join(' / ') : null,
+        artifact.source.startLine ? `L${artifact.source.startLine}-${artifact.source.endLine}` : null,
+      ].filter(Boolean).join(' · ')
+    : null
+
+  const hasAnchorLines = Boolean(artifact.source?.filePath && artifact.source?.startLine && artifact.source?.endLine)
+  const canOpenSource = hasAnchorLines || artifact.type === 'annotation'
+  const anchorChanged = anchorStatus === 'changed'
+  const anchorMissing = anchorStatus === 'missing'
+
+  const handleOpen = () => {
+    // 批注统一走 onOpenArtifactSource 以便按 Markdown model 解析定位
+    if (artifact.type === 'annotation' || annotation) {
+      onOpenArtifactSource(artifact)
+      return
+    }
+    if (hasAnchorLines) {
+      onOpenSource({
+        filePath: artifact.source!.filePath,
+        startLine: artifact.source!.startLine!,
+        endLine: artifact.source!.endLine!,
+      })
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-gm-border bg-gm-surface-elevated p-3 animate-slideInUp">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}>
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+        <span className="rounded-full border border-gm-border bg-gm-surface px-1.5 py-0.5 text-micro font-bold text-gm-text-tertiary flex-shrink-0">
+          {ARTIFACT_TYPE_LABELS[artifact.type]}
+        </span>
+        <span className="font-bold text-gm-text text-caption truncate">{artifact.title}</span>
+        {flashcards && (
+          <span className="ml-auto flex-shrink-0 text-micro text-gm-text-tertiary">{flashcards.cards.length} 张</span>
+        )}
+      </button>
+
+      {sourceLabel && (
+        <div className="mt-1.5 flex items-center gap-1.5 text-micro text-gm-text-tertiary pl-5">
+          <span className="truncate">{sourceLabel}</span>
+          {anchorChanged && (
+            <span className="flex-shrink-0 rounded-full bg-[#f5c31c]/15 text-[#b8860b] px-1.5 py-0.5 font-bold">来源已变化</span>
+          )}
+          {anchorMissing && (
+            <span className="flex-shrink-0 rounded-full bg-gm-error/10 text-gm-error px-1.5 py-0.5 font-bold">来源缺失</span>
+          )}
+        </div>
+      )}
+      {(anchorChanged || anchorMissing) && (
+        <div className="mt-1.5 ml-5 text-micro text-gm-text-tertiary">
+          {anchorChanged
+            ? '原文已修改，定位可能偏移；打开来源时会尝试用引用快照重新定位。'
+            : '来源文件已不可访问或未索引。'}
+        </div>
+      )}
+
+      {expanded && (
+        <div className="mt-2 ml-5 rounded-lg bg-gm-canvas border border-gm-border p-2 max-h-[280px] overflow-auto">
+          {flashcards ? (
+            <FlashcardList cards={flashcards.cards} />
+          ) : annotation ? (
+            <AnnotationDetail annotation={annotation} fallbackContent={artifact.content} />
+          ) : (
+            <AssistantMarkdown content={artifact.content} />
+          )}
+          {artifact.source?.quote && !annotation && !flashcards && (
+            <div className="mt-2 pl-3 border-l-2 border-gm-border text-micro text-gm-text-tertiary italic">
+              「{artifact.source.quote}」
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 flex items-center gap-2 pl-5">
+        {canOpenSource && (
+          <button
+            type="button"
+            onClick={handleOpen}
+            className="px-2 py-1 rounded-lg text-micro text-gm-primary hover:bg-gm-surface-hover border border-gm-border"
+            title="打开来源"
+          >
+            打开来源
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm('确认删除这条阅读成果吗？删除后不可恢复，不会改动原文。')) {
+              onDelete(artifact.id)
+            }
+          }}
+          className="px-2 py-1 rounded-lg text-micro text-gm-text-tertiary hover:text-gm-error hover:bg-gm-surface-hover border border-gm-border"
+          title="删除成果"
+        >
+          删除
+        </button>
+        <span className="ml-auto text-micro text-gm-text-disabled">
+          {new Date(artifact.createdAt).toLocaleDateString('zh-CN')}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function FlashcardList({ cards }: { cards: FlashcardStructuredContent['cards'] }) {
+  const [revealedIndex, setRevealedIndex] = useState<number | null>(null)
+  return (
+    <div className="space-y-1.5">
+      {cards.map((card, index) => {
+        const revealed = revealedIndex === index
+        return (
+          <div key={index} className="rounded-lg border border-gm-border bg-gm-surface p-2">
+            <div className="flex items-start gap-1.5">
+              <span className="flex-shrink-0 rounded-full bg-gm-primary/10 text-gm-primary text-[10px] font-bold px-1.5 py-0.5">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-caption text-gm-text font-bold break-words">{card.front}</div>
+                {revealed ? (
+                  <div className="mt-1 text-caption text-gm-text-secondary break-words border-t border-gm-border-subtle pt-1">
+                    {card.back}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setRevealedIndex(index)}
+                    className="mt-1 text-micro text-gm-primary hover:underline"
+                  >
+                    显示答案
+                  </button>
+                )}
+                {card.tags && card.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {card.tags.map((tag) => (
+                      <span key={tag} className="rounded-full bg-gm-surface-elevated border border-gm-border px-1.5 py-0.5 text-[10px] text-gm-text-tertiary">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function AnnotationDetail({
+  annotation,
+  fallbackContent,
+}: {
+  annotation: AnnotationStructuredContent
+  fallbackContent: string
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="pl-3 border-l-2 border-gm-primary text-micro text-gm-text-secondary italic break-words">
+        「{annotation.quote}」
+      </div>
+      <AssistantMarkdown content={annotation.note || fallbackContent} />
     </div>
   )
 }
@@ -484,20 +991,28 @@ export const ChatBubble = memo(function ChatBubble({
   content,
   isLast,
   streaming,
+  contextMeta,
   sources,
   onOpenSource,
+  onSaveAsMarkdown,
+  onSaveAsArtifact,
 }: {
   role: 'system' | 'user' | 'assistant'
   content: string
   isLast: boolean
   streaming: boolean
+  contextMeta?: ChatMessageContextMeta
   sources?: ChatMessageSource[]
   onOpenSource?: (source: LocalChatMessageSource) => void
+  onSaveAsMarkdown?: () => void
+  onSaveAsArtifact?: (type: ReadingArtifactType) => void
 }) {
   const isUser = role === 'user'
   const isEmpty = !content && isLast && streaming
   const isAssistantStreaming = !isUser && isLast && streaming
   const bubbleRef = useRef<HTMLDivElement>(null)
+  // 批注需绑定本地来源范围；仅当存在非 web 来源时显示「批注」按钮
+  const hasLocalSource = Boolean(sources?.some((s) => s.kind !== 'web'))
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
@@ -528,6 +1043,9 @@ export const ChatBubble = memo(function ChatBubble({
         } ${isAssistantStreaming ? 'gm-streaming-bubble' : ''}`}
         style={isUser ? { backgroundColor: 'var(--gm-user-bubble-bg)', color: 'var(--gm-user-bubble-text)' } : undefined}
       >
+        {!isUser && contextMeta?.readingScope && (
+          <ReadingScopeBadge scope={contextMeta.readingScope} coverage={contextMeta.sourceCoverage} />
+        )}
         {isEmpty ? (
           <div className="gm-typing-loader" aria-label="正在生成">
             <span style={{ animationDelay: '0ms' }} />
@@ -545,10 +1063,98 @@ export const ChatBubble = memo(function ChatBubble({
         {!isUser && sources && sources.length > 0 && onOpenSource && (
           <MessageSources sources={sources} onOpenSource={onOpenSource} />
         )}
+        {!isUser && !isEmpty && content.trim() && (onSaveAsMarkdown || onSaveAsArtifact) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {onSaveAsMarkdown && (
+              <Button
+                type="default"
+                size="small"
+                onClick={onSaveAsMarkdown}
+                title="保存为 Markdown"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="mr-1"
+                >
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <path d="M7 10l5 5 5-5" />
+                  <path d="M12 15V3" />
+                </svg>
+                Markdown
+              </Button>
+            )}
+            {onSaveAsArtifact && (
+              <>
+                <Button type="text" size="small" onClick={() => onSaveAsArtifact('summary')} title="保存为摘要">摘要</Button>
+                <Button type="text" size="small" onClick={() => onSaveAsArtifact('question_set')} title="保存为问题集">问题集</Button>
+                {hasLocalSource && (
+                  <Button type="text" size="small" onClick={() => onSaveAsArtifact('annotation')} title="保存为批注（绑定来源范围，不修改原文）">批注</Button>
+                )}
+                <Button type="text" size="small" onClick={() => onSaveAsArtifact('flashcard_set')} title="保存为知识卡片">卡片</Button>
+                <Button type="text" size="small" onClick={() => onSaveAsArtifact('note')} title="保存为阅读笔记">笔记</Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
 })
+
+const READING_SCOPE_LABELS: Record<ReadingScope, string> = {
+  selection: '选区',
+  section: '章节',
+  document: '全文',
+  workspace: '工作区',
+}
+
+const ARTIFACT_TYPE_LABELS: Record<ReadingArtifactType, string> = {
+  summary: '摘要',
+  question_set: '问题集',
+  annotation: '批注',
+  flashcard_set: '知识卡片',
+  note: '阅读笔记',
+}
+
+function deriveArtifactTitle(type: ReadingArtifactType, content: string): string {
+  // 取正文首行非空文本作为标题，截断到合理长度；不调用模型二次改写
+  const firstLine = content
+    .split('\n')
+    .map((line) => line.replace(/^#+\s*/, '').trim())
+    .find((line) => line.length > 0) || ARTIFACT_TYPE_LABELS[type]
+  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine
+}
+
+function ReadingScopeBadge({
+  scope,
+  coverage,
+}: {
+  scope: ReadingScope
+  coverage?: ChatMessageContextMeta['sourceCoverage']
+}) {
+  const coverageHint = coverage === 'document_partial'
+    ? '已截断'
+    : coverage === 'workspace_topk'
+      ? 'TopK 片段'
+      : coverage === 'none'
+        ? '无来源'
+        : undefined
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5 text-micro text-gm-text-tertiary">
+      <span className="inline-flex rounded-full border border-gm-border bg-gm-surface px-2 py-0.5 font-bold">
+        {READING_SCOPE_LABELS[scope]}
+      </span>
+      {coverageHint && <span>{coverageHint}</span>}
+    </div>
+  )
+}
 
 function AiAvatar({
   size,

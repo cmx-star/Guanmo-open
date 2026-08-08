@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatMessageSource } from '@/services/ai/types'
+import type { ChatMessage, ChatMessageSource, ReadingScope } from '@/services/ai/types'
 import type { Capability, SelectionRequestKind } from './intentDetector'
 import type { AgentToolName } from './toolSelector'
 
@@ -125,6 +125,7 @@ export interface RoutingDecision {
   isWebComparison: boolean
   isLocalResearch: boolean
   isFileSummary: boolean
+  readingScope?: ReadingScope
   answerInstruction?: string
   explicitMemoryWriteIntent: boolean
   /** 短指令续接时继承的查询文本 */

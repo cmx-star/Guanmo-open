@@ -135,6 +135,11 @@ const DOCUMENT_REWRITE_PATTERN = /(改写|润色|优化|重写|覆写|替换|写
 const LOCAL_RESEARCH_PATTERN = /(研究|调研|综述|梳理|归纳|综合|对比|比较|分析).*(知识库|本地(?:知识|文档|资料)|文档库|资料库|笔记库|我的(?:文档|笔记|资料)|资料里|笔记里|文档里|已有资料|本地资料|本地知识库)|(?:知识库|本地(?:知识|文档|资料)|文档库|资料库|笔记库|我的(?:文档|笔记|资料)|资料里|笔记里|文档里|已有资料|本地资料|本地知识库).*(研究|调研|综述|梳理|归纳|综合|对比|比较|分析|有没有|是否|哪些|如何|为什么|结论|观点|证据)|(?:根据|基于|结合).*(知识库|本地(?:知识|文档|资料)|文档库|资料库|笔记库|我的(?:文档|笔记|资料)|已有资料|本地资料|本地知识库).*(回答|分析|归纳|综合|对比|比较|判断|说明)|资料里有没有|笔记里有没有|文档里有没有|根据知识库|结合我的笔记|结合我的资料/i
 const TOPIC_RESEARCH_PATTERN = /^(?:(?:请|帮我|麻烦)(?:先)?\s*)?(?:研究一下|调研一下|做个研究|做一份研究|做个调研|做一份调研|综述一下|梳理一下|归纳一下|综合分析一下|研究|调研|综述|梳理|归纳|综合分析)[\s：:，,]*(.+)$/i
 const SCOPED_TEXT_TARGET_PATTERN = /^(?:这个|这份|这篇|这段|当前|本轮|选中|上述|上面|以下|该(?:文件|文档|笔记|文章|内容|文本|选区))/i
+const SECTION_READING_PATTERN = /(本节|这一节|该节|当前章节|这个章节|该章节|章节内容|标题下|这个标题|该标题|本小节|这一小节|当前小节)/i
+
+export function isSectionReadingIntent(query: string, context: AppContext = {}): boolean {
+  return Boolean(context.hasSelection) && SECTION_READING_PATTERN.test(query.trim())
+}
 
 function isTopicResearchIntent(query: string): boolean {
   const match = query.trim().match(TOPIC_RESEARCH_PATTERN)
@@ -170,6 +175,7 @@ export function isWebComparisonIntent(query: string): boolean {
  */
 export function classifySelectionRequest(query: string, context: AppContext = {}): SelectionRequestKind {
   if (!context.hasSelection) return 'none'
+  if (isSectionReadingIntent(query, context)) return 'context'
   if (SELECTION_EXPLICIT_LOOKUP_PATTERN.test(query)) return 'explicit_lookup'
   if (SELECTION_CONTEXT_RISK_PATTERN.test(query) && !isDocumentRewriteIntent(query)) return 'context'
   if (SELECTION_FAST_PATTERN.test(query)) return 'fast'

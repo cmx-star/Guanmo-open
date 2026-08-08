@@ -8,7 +8,11 @@ import {
   persistChatMessage,
   loadRecentChatTurns,
 } from '@/services/database/persistence'
-import { normalizeStoredDisplayContent } from '@/services/aiChatMessages'
+import {
+  decodeReadingScope,
+  decodeReadingSourceCoverage,
+  normalizeStoredDisplayContent,
+} from '@/services/aiChatMessages'
 import { buildLinkedQaRows } from '@/services/chatHistory'
 
 const MAX_MESSAGES = 100
@@ -591,6 +595,8 @@ function sanitizeContextMeta(value: unknown): ChatMessageContextMeta | undefined
     tagCount: value.tagCount,
     ragSourceCount: value.ragSourceCount,
     webSearchUsed: value.webSearchUsed,
+    readingScope: decodeReadingScope(value.readingScope),
+    sourceCoverage: decodeReadingSourceCoverage(value.sourceCoverage),
   }
 }
 

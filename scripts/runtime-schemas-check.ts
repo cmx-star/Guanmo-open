@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '../src/services/agent/session'
 import { decodeRagIndexState, decodeRagSearchResults } from '../src/services/rag/nativeIndex'
+import { decodeReadingArtifact, decodeAnnotationStructuredContent, decodeFlashcardStructuredContent } from '../src/services/database/readingArtifacts'
 
 assert.deepEqual(decodeRagIndexState({
   status: 'ready',
@@ -59,4 +60,86 @@ assert.equal(
   'AI 助手顶部不应渲染重复的 RAG 状态横条',
 )
 
-console.log('Runtime schema checks passed: RAG state, TopK hits, and Agent progress events')
+// reading_artifacts 运行时解码：未知类型/损坏数据进入可见错误，不静默丢弃
+const decodedArtifact = decodeReadingArtifact({
+  id: 'artifact-runtime',
+  type: 'summary',
+  title: '匿名摘要',
+  content: '正文',
+  structured_content: '{"points":["要点"]}',
+  source_file_path: 'C:/anonymous/note.md',
+  source_file_name: 'note.md',
+  source_content_hash: 'hash-rt',
+  source_heading_path: '["章节"]',
+  source_start_line: 2,
+  source_end_line: 4,
+  source_quote: '引用快照',
+  source_message_id: 'message-rt',
+  source_scope: 'document',
+  status: 'active',
+  created_at: 1700000000,
+  updated_at: 1700000001,
+})
+assert.equal(decodedArtifact.type, 'summary')
+assert.equal(decodedArtifact.source?.headingPath?.[0], '章节')
+assert.equal(decodedArtifact.source?.scope, 'document')
+assert.deepEqual(decodedArtifact.structuredContent, { points: ['要点'] })
+assert.throws(
+  () => decodeReadingArtifact({ ...decodedArtifact, type: 'unknown_type' } as never),
+  /类型/,
+  '未知阅读成果类型必须抛出可见错误',
+)
+assert.throws(
+  () => decodeReadingArtifact({
+    id: 'bad',
+    type: 'note',
+    title: 't',
+    content: 'c',
+    structured_content: '{broken',
+    source_file_path: null,
+    source_file_name: null,
+    source_content_hash: null,
+    source_heading_path: null,
+    source_start_line: null,
+    source_end_line: null,
+    source_quote: null,
+    source_message_id: null,
+    source_scope: null,
+    status: 'active',
+    created_at: 1,
+    updated_at: 1,
+  }),
+  /structured_content/,
+  '损坏的结构化数据必须抛出可见错误',
+)
+
+// 批注结构化解码：quote/note 必填，损坏数据抛出可见错误，不静默丢弃
+const decodedAnnotation = decodeAnnotationStructuredContent({
+  quote: '被批注的原文',
+  note: '批注正文',
+  contextFingerprint: 'fp',
+  startOffset: 10,
+  endOffset: 20,
+})
+assert.equal(decodedAnnotation.quote, '被批注的原文')
+assert.equal(decodedAnnotation.note, '批注正文')
+assert.equal(decodedAnnotation.startOffset, 10)
+assert.throws(
+  () => decodeAnnotationStructuredContent({ note: '缺 quote' }),
+  /quote/,
+  '批注缺 quote 必须抛出可见错误',
+)
+
+// 知识卡片结构化解码：至少一张合法卡片，空卡片集抛出可见错误
+const decodedFlashcards = decodeFlashcardStructuredContent({
+  cards: [{ front: '正面', back: '背面', tags: ['标签'] }],
+})
+assert.equal(decodedFlashcards.cards.length, 1)
+assert.equal(decodedFlashcards.cards[0].front, '正面')
+assert.throws(
+  () => decodeFlashcardStructuredContent({ cards: [] }),
+  /非空数组/,
+  '空卡片集必须抛出可见错误，不保存残缺卡片',
+)
+
+console.log('Runtime schema checks passed: RAG state, TopK hits, Agent progress events, and reading artifacts')
