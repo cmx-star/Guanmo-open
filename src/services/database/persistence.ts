@@ -83,6 +83,7 @@ export interface BackupPayload {
   }>
   memories: Memory[]
   artifacts: ReadingArtifactBackupEntry[]
+  readingReminders: ReadingReminderBackupEntry[]
   note: string
 }
 
@@ -106,6 +107,22 @@ export interface ReadingArtifactBackupEntry {
   sourceMessageId: string | null
   sourceScope: string | null
   status: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ReadingReminderBackupEntry {
+  id: string
+  title: string
+  description: string | null
+  dueAtUtc: number
+  createdTimezone: string
+  status: string
+  sourceArtifactId: string | null
+  sourceFilePath: string | null
+  sourceMessageId: string | null
+  notificationId: number | null
+  errorCode: string | null
   createdAt: number
   updatedAt: number
 }
@@ -895,17 +912,20 @@ export async function exportBackupPayload(): Promise<BackupPayload> {
   const memories = await loadAllMemories()
   const { loadReadingArtifactsForBackup } = await import('./readingArtifacts')
   const artifacts = await loadReadingArtifactsForBackup()
+  const { loadReadingRemindersForBackup } = await import('./readingReminders')
+  const readingReminders = await loadReadingRemindersForBackup()
   return {
     version: 1,
     exportedAt: Date.now(),
     sessions: serializedSessions,
     memories,
     artifacts,
+    readingReminders,
     note: '不包含 API Key 等敏感密钥。知识库文档索引可在新环境通过工作区重建恢复。',
   }
 }
 
-export async function importBackupPayload(payload: BackupPayload): Promise<{ sessions: number; messages: number; memories: number; artifacts: number }> {
+export async function importBackupPayload(payload: BackupPayload): Promise<{ sessions: number; messages: number; memories: number; artifacts: number; readingReminders: number }> {
   if (payload.version !== 1) {
     throw new Error(`不支持的备份版本：${payload.version}`)
   }

@@ -18,6 +18,7 @@ export type Capability =
   | 'selection_context'
   | 'file_read'
   | 'file_write'
+  | 'action'
   | 'web'
   | 'time'
 
@@ -67,6 +68,10 @@ const KEYWORD_CONFIG: Record<Capability, { weak: string[]; strong: string[] }> =
     weak: ['修改', '改写', '润色', '优化', '重写', '调整', '更新'],
     strong: ['修改文件', '改写文档', '替换内容', 'replace_current_tab_text', '编辑文件'],
   },
+  action: {
+    weak: ['阅读成果', '阅读笔记', '提醒'],
+    strong: ['保存为阅读成果', '保存阅读成果', '新建 Markdown 阅读笔记', '创建阅读提醒', '设置阅读提醒'],
+  },
   web: {
     weak: ['搜索', '查找', '网上', '联网', '最新', '新闻', '查一下', '搜一下'],
     strong: ['网络搜索', '联网搜索', '网上搜索', 'web_search', '搜索信息', '查找信息'],
@@ -106,6 +111,11 @@ const REGEX_PATTERNS: Record<Capability, RegExp[]> = {
     /(修改|改写|润色|优化|重写|覆写|重构|调整|更新|替换|改成|改为|加粗|斜体|删掉|删除|插入|补充|撤销|恢复|还原|改回|取消)[\s\S]*(文本|内容|文件|文档|段落|句子|选中|选择|tag|标签|上下文|这段|上面|前面|刚才)/,
     /(文本|内容|文件|文档|段落|句子|选中|选择|tag|标签|上下文|这段|上面|前面|刚才)[\s\S]*(修改|改写|润色|优化|重写|覆写|重构|调整|更新|替换|改成|改为|加粗|斜体|删掉|删除|插入|补充|撤销|恢复|还原|改回|取消)/,
     /^(帮我|请|把|将).*(修改|改写|润色|优化|重写|覆写|重构|调整|更新|替换|改成|改为|加粗|斜体|删掉|删除|插入|补充|撤销|恢复|还原|改回|取消)/,
+  ],
+  action: [
+    /(保存|存为|添加).*(阅读成果|摘要|问题集|知识卡片|批注)/i,
+    /(新建|创建|保存).*(Markdown|markdown).*(阅读笔记|笔记)/i,
+    /(创建|设置|添加|提醒).*(阅读提醒|提醒我)/i,
   ],
   web: [
     /^(搜索|查找|帮我搜|网上搜|联网搜)/,
@@ -323,7 +333,7 @@ export function detectIntentScores(
   query: string,
   context: AppContext = {}
 ): IntentDetectionResult {
-  const capabilities: Capability[] = ['memory', 'knowledge', 'selection_context', 'file_read', 'file_write', 'web', 'time']
+  const capabilities: Capability[] = ['memory', 'knowledge', 'selection_context', 'file_read', 'file_write', 'action', 'web', 'time']
 
   const scores = capabilities.map(cap => scoreCapability(cap, query, context))
 

@@ -145,6 +145,23 @@ CREATE TABLE IF NOT EXISTS reading_artifacts (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- One-shot reading reminders. Notification delivery is reconciled from this table.
+CREATE TABLE IF NOT EXISTS reading_reminders (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  due_at_utc INTEGER NOT NULL,
+  created_timezone TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'fired', 'cancel_pending', 'cancelled', 'failed')),
+  source_artifact_id TEXT,
+  source_file_path TEXT,
+  source_message_id TEXT,
+  notification_id INTEGER,
+  error_code TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
@@ -156,6 +173,8 @@ CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_reading_artifacts_type ON reading_artifacts(type);
 CREATE INDEX IF NOT EXISTS idx_reading_artifacts_status ON reading_artifacts(status);
 CREATE INDEX IF NOT EXISTS idx_reading_artifacts_source ON reading_artifacts(source_file_path);
+CREATE INDEX IF NOT EXISTS idx_reading_reminders_status ON reading_reminders(status);
+CREATE INDEX IF NOT EXISTS idx_reading_reminders_due_at ON reading_reminders(due_at_utc);
 `
 
 export const DB_MIGRATIONS = [

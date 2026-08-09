@@ -7,29 +7,32 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 4｜锚定批注与知识卡片
-- 阶段状态：进行中（自动化交付完成，真实桌面手工验收未验证）
-- 上次执行结果（阶段 4 自动化部分）：
-  - 扩展 readingArtifacts.ts：新增批注结构化内容（AnnotationStructuredContent）、知识卡片结构化内容（FlashcardStructuredContent）与运行时解码（decodeAnnotationStructuredContent/decodeFlashcardStructuredContent，损坏数据抛出可见错误）
-  - 新增基于 Markdown model/source offset 的虚拟预览安全定位：findMarkdownBlockByOffset/findMarkdownBlockByQuote/computeMarkdownBlockFingerprint/resolveAnnotationPosition/computeAnnotationFingerprint（不遍历 DOM，不假设全文已挂载）
-  - 新增知识卡片候选确定性解析 parseFlashcardCandidates（支持 ```flashcard 围栏块与 Q:/A: 问答列表，解析失败返回 null 保留原回答）
-  - AiPanel 新增批注/知识卡片保存按钮与流程；批注按 Markdown model 解析定位打开来源；卡片列表支持显示答案与标签
-  - readingArtifactsStore.SaveFromMessageInput 扩展 structuredContent 字段并持久化
-  - 为满足 bundle budget，将 EditorArea 的 replaceMarkdownBlock 改为动态导入，使 markdownBlocks.ts 从入口 chunk 移至独立 chunk
-  - 扩展 runtime-schemas-check 与 readingArtifacts.test.ts：新增批注/卡片解码、Markdown 定位、卡片解析定向测试
+- 当前阶段：阶段 6｜本地阅读提醒与系统通知
+- 阶段状态：进行中（方案 B 已确认，转入 Windows 原生计划通知）
+- 上次执行结果（阶段 5 自动化部分）：
+  - 工具注册表新增 effect、capability、confirmationPolicy 与撤销说明；只读工具保持原行为，副作用工具必须返回受支持的确认提案
+  - 新增严格 ActionProposal 运行时 schema、15 分钟过期、版本校验、动作/字段白名单与旧 EditConfirmation 兼容解码
+  - 新增保存阅读成果、新建 Markdown 阅读笔记、创建阅读提醒三类高层提案工具；文件提案拒绝任意 path，确认后仍走系统保存对话框
+  - 将既有 save_memory 收敛为确认提案；确认执行器支持授权重验、重复确认幂等、取消、目标变化、失败分类与匿名状态
+  - Agent session/useAiChat/chat metadata/AiPanel 已接入通用行动确认卡；确认历史解码与执行命令按需加载以满足 bundle budget
+  - 新增 actionProposal.test.ts、test:action-proposals 与 runtime/routing 定向覆盖
 - 验证结果：
-  - `npm run test:reading-artifacts`：通过（50 tests）
+  - `npm run test:action-proposals`：通过（7 tests）
+  - `npm run test:agent-parser`：通过
+  - `npx vitest run tests/agent/agentExecutionBudget.test.ts`：通过（7 tests）
+  - `npm run test:routing-matrix`：通过（154 tests）
   - `npm run test:runtime-schemas`：通过
-  - `npx vitest run tests/markdown/markdownBlocks.test.ts`：通过（6 tests）
   - `npm run typecheck`：通过
-  - 修改文件 ESLint：0 error（4 个预先存在 warning，与本次修改无关）
-  - `npm run build:desktop`：通过，bundle budget 通过（入口 1,349,762 bytes）
+  - 修改文件 ESLint：0 error（7 个预先存在 warning，与本次修改无关）
+  - `npm run build:desktop`：通过，bundle budget 通过（入口 1,349,371 bytes）
   - `git diff --check`：无错误（仅 CRLF 提示）
-  - 真实桌面手工验收（长文虚拟预览定位、批注不修改原文、来源变化状态）：未验证（需用户手工执行）
-- 本阶段剩余：阶段 4 仅剩真实桌面手工验收（用户侧）
-- 本阶段允许修改：阶段 4 列出的批注 schema、知识卡片结构、Markdown 定位、卡片解析定向测试；EditorArea.tsx 的 replaceMarkdownBlock 动态导入为满足 bundle budget 的最小调整
-- 阻塞问题：阶段 1/2/3/4 真实模型/桌面手工验收需用户执行；阶段 5 涉及 Agent 行动安全，执行前须读 docs/agent-contracts/ai-selection.md
-- 下一阶段：阶段 5｜Agent 行动安全底座
+  - 真实桌面行动确认卡验收：未验证（需用户手工执行）
+- 阶段 6 已完成：reading_reminders schema/repository/备份兼容、未来绝对时间与 IANA 时区重验、pending 状态机、提醒列表、取消/启动对账骨架、ActionProposal 执行接入、notification 插件最小初始化与定向测试
+- 阶段 6 当前验证：`npm run test:reading-reminders` 通过（5 tests）；`npm run test:action-proposals` 通过（7 tests）；提醒备份 Rust 定向测试通过；`npm run typecheck`、Rust fmt/check 通过
+- 本阶段剩余：实现仅 Windows 编译的原生计划通知 schedule/list/cancel 受限命令，接回前端适配器；然后补编辑/失败重试/来源返回、完整阶段 6 门禁与安装版人工验收
+- 本阶段允许修改：阶段 6 列出的提醒 schema/repository/备份、通知 service/capability、提醒 UI、Agent 提案执行器与定向测试
+- 阻塞问题：方案决策阻塞已解除。用户已选择方案 B：实现 Windows 原生计划通知，不引入开机自启、后台常驻、Shell 或任务计划程序；Windows 安装版实际触发、取消、重启与应用关闭验收仍需用户侧执行。阶段 1-5 真实模型/桌面手工验收仍需用户执行
+- 下一阶段：阶段 7｜综合验收与扩展决策门
 - 远程操作：禁止自动提交、推送、打 tag、创建 PR 或 Release
 
 ## 项目目标
@@ -252,6 +255,64 @@
 
 ## 当前阶段详细任务
 
+### 阶段 6 目标
+
+完成“阅读上下文 → AI 提案 → 用户确认 → SQLite 提醒 → 系统通知 → 返回来源”的一次性本地提醒闭环；SQLite 是唯一真相源，系统通知注册失败必须保留可诊断状态。
+
+### 阶段 6 执行前必读
+
+- `AGENTS.md`
+- `AI_CAPABILITY_ENHANCEMENT_PLAN.md`
+- `docs/agent-contracts/ui.md`
+- `docs/agent-contracts/ai-selection.md`
+- `docs/agent-contracts/database.md`
+- `docs/agent-contracts/desktop-services.md`
+- 全局 `guides/api-coordination.md` 与 `guides/compatibility.md`
+- 当前实际代码：数据库 schema/backup、App 启动恢复、Tauri capability、阶段 5 ActionProposal 执行链路
+
+### 阶段 6 允许修改
+
+- `src/services/database/schema.ts`
+- 新增提醒 repository/service/store 与直接相关 UI
+- `src/services/dataBackup.ts`、`src/services/database/persistence.ts`
+- `src/services/actionProposalCommand.ts`、提醒提案运行时 schema
+- `src-tauri/Cargo.toml`、`src-tauri/src/**`、`src-tauri/capabilities/**`、`src-tauri/tauri.conf.json` 中通知所需最小变更
+- 阶段 6 直接相关的匿名定向测试、脚本与 `package.json`
+- `AI_CAPABILITY_ENHANCEMENT_PLAN.md`
+
+### 阶段 6 实施任务
+
+1. 定义向后兼容的 reading_reminders schema、运行时解码、repository、备份导入导出与一次性提醒状态机。
+2. 确认卡与执行器重验明确未来时间、时区、提案版本和来源；模糊或过去时间拒绝执行。
+3. 核对并接入 Tauri 官方 notification 插件的当前 API，只开放创建/查询/取消提醒所需最小权限。
+4. 实现 pending → 系统注册 → scheduled 的可恢复流程，以及编辑、取消、启动对账和失败重试。
+5. 提供低干扰提醒列表和查看来源入口；权限拒绝不得影响阅读与成果能力。
+6. 执行阶段 6 定向检查并记录 Windows 安装版未验证项。
+
+### 阶段 6 验收清单
+
+- [ ] 旧数据库幂等新增 reading_reminders，旧备份缺少 reminders 时按空数组兼容。
+- [ ] 只接受未来一次性绝对时间；确认卡显示日期、星期、时区。
+- [ ] 重复确认、重启对账和重试不会重复创建提醒。
+- [ ] 取消后 SQLite 与系统待发通知状态可恢复，不静默丢失。
+- [ ] 通知权限只在用户确认创建提醒时请求；拒绝后阅读功能正常。
+- [ ] 提醒列表可查看来源；平台点击接管不可用时明确降级。
+- [ ] Windows 安装版完成未来通知、取消、重启和来源返回手工验收。
+
+### 阶段 6 检查命令
+
+提醒解析/状态机/repository/Agent 提案定向测试、`npm run test:runtime-schemas`、通知 capability 静态检查、`npm run typecheck`、修改文件定向 ESLint、`npm run build:desktop`、Rust fmt/check 与相关定向测试、`git diff --check`。
+
+### 阶段 6 禁止事项
+
+- 不实现重复提醒、开机自启、后台常驻或外部日历。
+- 不在启动时主动请求通知权限。
+- 不绕过 ActionProposal 确认或恢复任意路径/任意 Shell 能力。
+- 不清空、重建或双写现有业务数据。
+- 不自动提交或推送代码。
+
+## 已完成阶段详细任务（历史）
+
 ### 阶段 1 目标
 
 在不增加数据库、文件写入和系统权限的前提下，交付可离线验证的阅读范围契约与质量基线，并让用户在真实桌面上清楚看到回答使用了什么范围和来源。
@@ -369,3 +430,19 @@ git diff --check
 - 完成内容：扩展 readingArtifacts.ts 新增批注/知识卡片结构化内容与运行时解码（损坏数据抛出可见错误）；新增基于 Markdown model/source offset 的虚拟预览安全定位（findMarkdownBlockByOffset/findMarkdownBlockByQuote/computeMarkdownBlockFingerprint/resolveAnnotationPosition，不遍历 DOM）；新增知识卡片候选确定性解析 parseFlashcardCandidates（```flashcard 围栏块与 Q:/A: 问答列表，解析失败保留原回答）；AiPanel 新增批注/卡片保存按钮与定位打开来源；readingArtifactsStore 扩展 structuredContent 持久化；EditorArea 的 replaceMarkdownBlock 改为动态导入以满足 bundle budget；扩展 runtime-schemas-check 与 readingArtifacts.test.ts 定向测试
 - 验证结果：test:reading-artifacts(50)、test:runtime-schemas、markdownBlocks(6)、typecheck、修改文件 ESLint(0 error)、build:desktop(bundle budget 通过，入口 1,349,762 bytes)、git diff --check 全部通过；真实桌面手工验收（长文虚拟预览定位、批注不修改原文、来源变化状态）未验证
 - 遗留问题：长文虚拟预览批注定位、批注不修改原文、来源修改/删除/重命名状态需用户手工验收
+
+### 阶段 5｜Agent 行动安全底座
+
+- 状态：进行中（自动化交付完成，真实桌面手工验收未验证）
+- 完成内容：工具 effect/capability/confirmation/reversible 元数据；ActionProposal 严格运行时 schema 与旧 EditConfirmation 兼容；阅读成果/Markdown 笔记/阅读提醒高层提案；save_memory 确认化；通用确认卡、授权重验、过期/幂等/取消/失败分类与匿名状态；按需加载满足 bundle budget
+- 验证结果：test:action-proposals(7)、test:agent-parser、agentExecutionBudget(7)、test:routing-matrix(154)、test:runtime-schemas、typecheck、修改文件 ESLint(0 error)、build:desktop(bundle budget 通过，入口 1,349,371 bytes)、git diff --check 全部通过；真实桌面确认卡交互未验证
+- 遗留问题：真实桌面需手工验证保存成果、系统保存对话框、长期记忆确认及历史卡片状态；创建提醒的真正执行由阶段 6 接入
+
+### 阶段 6｜本地阅读提醒与系统通知
+
+- 状态：进行中（方案 B 已确认，Windows 原生计划通知待实现）
+- 已完成内容：reading_reminders SQLite 真相源与运行时解码；旧备份缺字段兼容的导入导出；未来绝对时间、时区与确认时重验；pending/scheduled/failed/cancel_pending/cancelled/fired 状态机骨架；提醒列表与取消入口；启动对账；ActionProposal 执行器；notification 2.3.3 插件、Rust 初始化及权限检查/请求/立即通知最小 capability；5 项状态机定向测试与 Rust 备份事务测试
+- 当前安全降级：桌面通知适配器不调用类型声明中实际仅移动端可用的 schedule/pending/cancel，也不把未来通知误发为立即通知；持久化失败状态只记录匿名错误码 `desktop_notification_scheduling_unsupported`
+- 验证结果：test:reading-reminders(5)、test:action-proposals(7)、Rust backup reminder 定向测试、typecheck、Rust fmt/check 通过；其余阶段 6 门禁尚未执行
+- 阻塞证据：tauri-plugin-notification 2.3.3 的 `init()` 桌面 invoke handler 仅注册 notify/request_permission/is_permission_granted；schedule/pending/cancel 位于移动端实现。计划文件原先对桌面能力的假设不成立
+- 已确认决策：采用方案 B，实现仅 Windows 编译的原生计划通知 schedule/list/cancel 受限命令；不增加开机自启、后台常驻、Shell 或任务计划程序。完成阶段 6 自动门禁与安装版验收记录前不进入阶段 7

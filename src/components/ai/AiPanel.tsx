@@ -20,6 +20,7 @@ import type {
   ChatMessageSource,
   LocalChatMessageSource,
   ReadingScope,
+  ActionProposal,
 } from '@/services/ai/types'
 import { AI_SHORTCUT_SUBMIT_EVENT } from '@/services/aiContext'
 import { applyPendingEditCommand } from '@/services/pendingEditCommand'
@@ -36,6 +37,8 @@ import {
   parseFlashcardCandidates,
   resolveAnnotationPosition,
 } from '@/services/database/readingArtifacts'
+import { loadReadingReminders, type ReadingReminder } from '@/services/database/readingReminders'
+import { cancelReadingReminder } from '@/services/readingReminders'
 
 type AiPanelProps = {
   fullscreenDragHandleProps?: {
@@ -70,7 +73,9 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const visibleMessages = useMemo(() => messages.filter((msg) => !msg.hidden), [messages])
   const [reasoningMode, setReasoningMode] = useState<'off' | 'on'>('off')
   const [resetManualToggle, setResetManualToggle] = useState(0)
-  const [panelView, setPanelView] = useState<'chat' | 'artifacts'>('chat')
+  const [panelView, setPanelView] = useState<'chat' | 'artifacts' | 'reminders'>('chat')
+  const [reminders, setReminders] = useState<ReadingReminder[]>([])
+  const [remindersLoading, setRemindersLoading] = useState(false)
   const artifacts = useReadingArtifactsStore((s) => s.artifacts)
   const artifactsLoading = useReadingArtifactsStore((s) => s.loading)
   const artifactFilter = useReadingArtifactsStore((s) => s.filter)
@@ -86,6 +91,31 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
       loadArtifacts()
     }
   }, [panelView, loadArtifacts])
+
+  const refreshReminders = useCallback(async () => {
+    setRemindersLoading(true)
+    try {
+      setReminders(await loadReadingReminders())
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '加载提醒失败')
+    } finally {
+      setRemindersLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (panelView === 'reminders') void refreshReminders()
+  }, [panelView, refreshReminders])
+
+  const handleCancelReminder = useCallback(async (id: string) => {
+    try {
+      await cancelReadingReminder(id)
+      await refreshReminders()
+      toast.success('提醒已取消')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '取消提醒失败')
+    }
+  }, [refreshReminders])
 
   // 检测是否在底部（距离底部 50px 以内视为底部）
   const isAtBottom = useCallback(() => {
@@ -458,6 +488,18 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
               </svg>
             }
           />
+          <Button
+            type={panelView === 'reminders' ? 'default' : 'text'}
+            size="small"
+            onClick={() => setPanelView(panelView === 'reminders' ? 'chat' : 'reminders')}
+            title={panelView === 'reminders' ? '返回对话' : '阅读提醒'}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 01-3.46 0" />
+              </svg>
+            }
+          />
           {panelView === 'chat' && messages.length > 0 && (
             <Button
               type="text"
@@ -500,6 +542,12 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             onOpenArtifactSource={handleOpenArtifactSource}
             anchorStatuses={anchorStatuses}
             onCheckAnchor={checkAnchor}
+          />
+        ) : panelView === 'reminders' ? (
+          <ReadingRemindersPanel
+            reminders={reminders}
+            loading={remindersLoading}
+            onCancel={handleCancelReminder}
           />
         ) : visibleMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-6 animate-fadeIn">
@@ -587,6 +635,11 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                     />
                   </div>
                 )}
+                {msg.role === 'assistant' && msg.actionProposal && (
+                  <div className="mt-2">
+                    <ActionProposalCard proposal={msg.actionProposal} />
+                  </div>
+                )}
                 {msg.tags && msg.tags.length > 0 && (
                   <div className={`flex flex-wrap gap-1 mt-1 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.tags.map((tag, j) => (
@@ -635,6 +688,76 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
           resetManualToggle={resetManualToggle}
         />
       )}
+    </div>
+  )
+}
+
+const REMINDER_STATUS_LABELS: Record<ReadingReminder['status'], string> = {
+  pending: '待注册',
+  scheduled: '已安排',
+  fired: '已到期',
+  cancel_pending: '待取消',
+  cancelled: '已取消',
+  failed: '失败',
+}
+
+function ReadingRemindersPanel({
+  reminders,
+  loading,
+  onCancel,
+}: {
+  reminders: ReadingReminder[]
+  loading: boolean
+  onCancel: (id: string) => void | Promise<void>
+}) {
+  if (loading) {
+    return <div className="p-6 text-center text-caption text-gm-text-secondary">正在加载提醒…</div>
+  }
+  if (reminders.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+        <p className="mb-1 font-bold text-gm-text-secondary">还没有阅读提醒</p>
+        <p className="text-caption text-gm-text-tertiary">可在对话中让 AI 提出一次性提醒，确认后才会注册。</p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2 p-3">
+      {reminders.map((reminder) => {
+        const cancellable = ['pending', 'scheduled', 'cancel_pending'].includes(reminder.status)
+        return (
+          <div key={reminder.id} className="rounded-xl border border-gm-border bg-gm-surface-elevated p-3">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-body font-bold text-gm-text">{reminder.title}</p>
+                <p className="mt-1 text-caption text-gm-text-secondary">
+                  {new Intl.DateTimeFormat('zh-CN', {
+                    timeZone: reminder.createdTimezone,
+                    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+                    hour: '2-digit', minute: '2-digit',
+                  }).format(reminder.dueAtUtc)}
+                </p>
+                {reminder.description && (
+                  <p className="mt-1 whitespace-pre-wrap text-caption text-gm-text-tertiary">{reminder.description}</p>
+                )}
+                <p className="mt-2 text-micro text-gm-text-tertiary">
+                  {REMINDER_STATUS_LABELS[reminder.status]}
+                  {reminder.errorCode ? ` · ${reminder.errorCode}` : ''}
+                </p>
+              </div>
+              {cancellable && (
+                <button
+                  type="button"
+                  onClick={() => void onCancel(reminder.id)}
+                  className="rounded-lg border border-gm-border px-2 py-1 text-micro text-gm-text-secondary hover:bg-gm-surface-hover hover:text-gm-text"
+                >
+                  取消
+                </button>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1320,6 +1443,55 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
     </div>
   )
 })
+
+function ActionProposalCard({ proposal }: { proposal: ActionProposal }) {
+  const statusLabel: Record<ActionProposal['status'], string> = {
+    pending: '待确认',
+    executing: '执行中',
+    completed: '已完成',
+    rejected: '已拒绝',
+    expired: '已过期',
+    failed: '执行失败',
+  }
+
+  return (
+    <div className="animate-slideInUp">
+      <div className="rounded-xl p-3" style={{ border: '1px solid var(--gm-warning)', backgroundColor: 'color-mix(in srgb, var(--gm-warning) 8%, transparent)' }}>
+        <div className="text-caption font-bold text-gm-text-primary">{proposal.title}</div>
+        <div className="mt-1 text-caption text-gm-text-secondary">目标：{proposal.target}</div>
+        <div className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg border border-gm-border bg-gm-surface-elevated px-3 py-2 text-caption text-gm-text-primary">
+          {proposal.preview}
+        </div>
+        <div className="mt-2 text-caption text-gm-text-secondary">风险：{proposal.riskDescription}</div>
+        <div className="mt-1 text-caption text-gm-text-secondary">
+          {proposal.reversible ? '可撤销' : '不可自动撤销'}：{proposal.reversibleDescription}
+        </div>
+        {proposal.status === 'pending' ? (
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => void import('@/services/actionProposalCommand')
+                .then(({ confirmActionProposalCommand }) => confirmActionProposalCommand(proposal.id))}
+              className="flex-1 rounded-lg bg-gm-primary px-3 py-1.5 text-caption font-bold text-white transition-opacity hover:opacity-90"
+            >
+              确认执行
+            </button>
+            <button
+              onClick={() => void import('@/services/actionProposalCommand')
+                .then(({ rejectActionProposalCommand }) => rejectActionProposalCommand(proposal.id))}
+              className="flex-1 rounded-lg border border-gm-border px-3 py-1.5 text-caption text-gm-text-secondary hover:bg-gm-surface-hover"
+            >
+              拒绝
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3 rounded-lg border border-gm-border bg-gm-surface-elevated px-3 py-1.5 text-caption text-gm-text-secondary">
+            {statusLabel[proposal.status]}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function PendingEditCard({ edit, actionable }: { edit: PendingEdit; actionable: boolean }) {
   const rejectPendingEdit = useChatStore((s) => s.rejectPendingEdit)

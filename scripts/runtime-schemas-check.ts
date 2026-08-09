@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '../src/services/agent/session'
+import { buildPendingActionResult, decodePendingAction } from '../src/services/agent/actionProposal'
 import { decodeRagIndexState, decodeRagSearchResults } from '../src/services/rag/nativeIndex'
 import { decodeReadingArtifact, decodeAnnotationStructuredContent, decodeFlashcardStructuredContent } from '../src/services/database/readingArtifacts'
 
@@ -52,6 +53,27 @@ assert.equal(decodeKnowledgeSearchOutcome(decodeAgentStepEvent({
   content: JSON.stringify({ status: 'empty', results: [] }),
   timestamp: 3,
 })), 'empty')
+
+const pendingAction = decodePendingAction(JSON.parse(buildPendingActionResult(
+  'create_markdown_note',
+  { title: '匿名笔记', content: '正文' },
+  { title: '新建 Markdown 阅读笔记', target: '系统保存对话框', preview: '匿名笔记' },
+)))
+assert.equal(pendingAction?.kind, 'create_markdown_note')
+assert.throws(
+  () => decodePendingAction({ __pendingAction: true, kind: 'run_shell', payload: {} }),
+  /未注册/,
+  '未注册动作不得进入 store 或执行器',
+)
+assert.throws(
+  () => buildPendingActionResult(
+    'create_markdown_note',
+    { title: '匿名笔记', content: '正文', path: 'C:/forbidden.md' },
+    { title: '新建 Markdown 阅读笔记', target: '系统保存对话框', preview: '匿名笔记' },
+  ),
+  /未注册字段 path/,
+  '文件行动提案不得接受任意路径',
+)
 
 const aiPanelSource = readFileSync('src/components/ai/AiPanel.tsx', 'utf8')
 assert.equal(

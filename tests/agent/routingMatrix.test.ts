@@ -1225,6 +1225,26 @@ describe('buildCandidateTools 工具映射', () => {
     expect(buildCandidateTools(['file_write'])).toEqual(['list_current_edit_targets', 'replace_current_tab_text'])
   })
 
+  it('action 只映射到三类高层行动提案工具', () => {
+    expect(buildCandidateTools(['action'])).toEqual([
+      'propose_save_reading_artifact',
+      'propose_create_markdown_note',
+      'propose_create_reading_reminder',
+    ])
+  })
+
+  it('明确的阅读成果与提醒请求进入行动提案工具，不直接执行副作用', () => {
+    const artifactDecision = makeRoutingDecision('把这份回答保存为阅读成果', { hasContextTags: true })
+    expect(artifactDecision.mode).toBe('agent')
+    expect(artifactDecision.candidates).toContain('action')
+    expect(artifactDecision.candidateTools).toContain('propose_save_reading_artifact')
+
+    const reminderDecision = makeRoutingDecision('创建阅读提醒，明天下午三点提醒我复习', {})
+    expect(reminderDecision.mode).toBe('agent')
+    expect(reminderDecision.candidates).toContain('action')
+    expect(reminderDecision.candidateTools).toContain('propose_create_reading_reminder')
+  })
+
   it('file_read 映射到 read_context_file', () => {
     expect(buildCandidateTools(['file_read'])).toEqual(['read_context_file'])
   })

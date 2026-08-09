@@ -9,11 +9,25 @@ export interface ToolParameter {
   required: boolean
 }
 
+export type ToolEffect = 'read' | 'write_local' | 'schedule' | 'external'
+export type ToolConfirmationPolicy = 'never' | 'required'
+
 export interface ToolDefinition {
   name: string
   description: string
   parameters: ToolParameter[]
+  effect?: ToolEffect
+  capability?: string
+  confirmationPolicy?: ToolConfirmationPolicy
+  reversibleDescription?: string
   execute: (args: Record<string, unknown>, context?: ToolExecutionContext) => Promise<string>
+}
+
+export interface RegisteredToolDefinition extends ToolDefinition {
+  effect: ToolEffect
+  capability: string
+  confirmationPolicy: ToolConfirmationPolicy
+  reversibleDescription: string
 }
 
 export type AgentProgressStage =

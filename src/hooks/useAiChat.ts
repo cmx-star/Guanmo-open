@@ -9,6 +9,7 @@ import { shouldIncludeFullDocumentContext } from '@/services/agent/intentDetecto
 import { makeRoutingDecision } from '@/services/agent/routingService'
 import type { AgentStep, AgentTaskContext } from '@/services/agent/types'
 import { createAgentTaskContext, decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '@/services/agent/session'
+import { createActionProposal } from '@/services/agent/actionProposal'
 import type { ContextTag } from '@/types/contextTag'
 import { buildContextFromTags } from '@/services/contextBuilder'
 import { readFile as readTauriFile } from '@/hooks/useTauri'
@@ -64,6 +65,12 @@ function getAgentProgressText(step: AgentStep): string {
       return '正在阅读上下文...'
     case 'replace_current_tab_text':
       return '正在生成文本修改确认卡片...'
+    case 'propose_save_reading_artifact':
+      return '正在生成阅读成果确认卡片...'
+    case 'propose_create_markdown_note':
+      return '正在生成阅读笔记确认卡片...'
+    case 'propose_create_reading_reminder':
+      return '正在生成阅读提醒确认卡片...'
     case 'get_current_time':
       return '正在读取当前系统时间...'
     default:
@@ -82,6 +89,9 @@ function getAgentToolLabel(toolName: string): string {
     read_context_file: '授权文件读取',
     read_selection_context: '上下文读取',
     replace_current_tab_text: '修改确认卡片生成',
+    propose_save_reading_artifact: '阅读成果确认卡片生成',
+    propose_create_markdown_note: '阅读笔记确认卡片生成',
+    propose_create_reading_reminder: '阅读提醒确认卡片生成',
     get_current_time: '系统时间读取',
   }[toolName] || `工具 ${toolName}`
 }
@@ -343,6 +353,7 @@ export function useAiChat() {
         updateRequestMessage('Agent 正在规划工具链路...')
         addTimelineItem({ type: 'local_search_start', label: 'Agent 开始规划工具链路' })
         let pendingEditCount = 0
+        let pendingActionCount = 0
         let liveAgentStepCount = 0
         let hasVisibleStreamContent = false
         const handleAgentStep = (step: AgentStep) => {
@@ -398,20 +409,39 @@ export function useAiChat() {
               type: 'web_search_done',
               label: event.toolName ? `${getAgentToolLabel(event.toolName)}已完成` : '工具结果已返回',
             })
-            if (!event.pendingEdit) return
-            const targetMessageId = pendingEditCount === 0
-              ? assistantMessageId
-              : `assistant-${requestId}-edit-${pendingEditCount}`
-            if (pendingEditCount > 0) {
-              addMessage({ id: targetMessageId, parentId: userMsg.id, role: 'assistant', content: '已生成修改确认卡片，请在下方确认。', timestamp: Date.now() })
+            if (event.pendingEdit) {
+              const targetMessageId = pendingEditCount === 0
+                ? assistantMessageId
+                : `assistant-${requestId}-edit-${pendingEditCount}`
+              if (pendingEditCount > 0) {
+                addMessage({ id: targetMessageId, parentId: userMsg.id, role: 'assistant', content: '已生成修改确认卡片，请在下方确认。', timestamp: Date.now() })
+              }
+              pendingEditCount++
+              useChatStore.getState().setPendingEdit({
+                id: `edit-${Date.now()}`,
+                messageId: targetMessageId,
+                ...event.pendingEdit,
+                status: 'pending',
+              })
             }
-            pendingEditCount++
-            useChatStore.getState().setPendingEdit({
-              id: `edit-${Date.now()}`,
-              messageId: targetMessageId,
-              ...event.pendingEdit,
-              status: 'pending',
-            })
+            if (event.pendingAction) {
+              const targetMessageId = pendingActionCount === 0 && pendingEditCount === 0
+                ? assistantMessageId
+                : `assistant-${requestId}-action-${pendingActionCount}`
+              if (targetMessageId !== assistantMessageId) {
+                addMessage({ id: targetMessageId, parentId: userMsg.id, role: 'assistant', content: '已生成行动确认卡片，请在下方确认。', timestamp: Date.now() })
+              }
+              pendingActionCount++
+              const proposal = createActionProposal(event.pendingAction, {
+                id: `action-${Date.now()}-${pendingActionCount}`,
+                messageId: targetMessageId,
+              })
+              useChatStore.setState((state) => ({
+                messages: state.messages.map((message) => message.id === targetMessageId
+                  ? { ...message, actionProposal: proposal }
+                  : message),
+              }))
+            }
           }
         }
 
