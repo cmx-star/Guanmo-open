@@ -363,6 +363,10 @@ function App() {
         logDuration('ui ready', appInitStartedAt)
 
         // ==================== 首屏后：注册闲时预热任务 ====================
+        void import('@/services/readingReminders')
+          .then(({ reconcileReadingReminders }) => reconcileReadingReminders())
+          .catch((error) => console.warn('[Reminder] startup reconciliation failed:', error))
+
         scheduleIdleWarmup()
 
       } catch (err) {

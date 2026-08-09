@@ -51,7 +51,19 @@ export interface ChatMessageContextMeta {
   tagCount: number
   ragSourceCount: number
   webSearchUsed: boolean
+  readingScope?: ReadingScope
+  sourceCoverage?: ReadingSourceCoverage
 }
+
+export type ReadingScope = 'selection' | 'section' | 'document' | 'workspace'
+
+export type ReadingSourceCoverage =
+  | 'selected_range'
+  | 'section_chunks'
+  | 'document_full'
+  | 'document_partial'
+  | 'workspace_topk'
+  | 'none'
 
 export interface LocalChatMessageSource {
   kind?: 'local'
@@ -90,6 +102,41 @@ export interface EditConfirmation {
   status: 'pending' | 'applied' | 'rejected'
 }
 
+export type ActionProposalKind =
+  | 'save_memory'
+  | 'save_reading_artifact'
+  | 'create_markdown_note'
+  | 'create_reading_reminder'
+
+export type ActionProposalStatus =
+  | 'pending'
+  | 'executing'
+  | 'completed'
+  | 'rejected'
+  | 'expired'
+  | 'failed'
+
+export interface ActionProposal {
+  id: string
+  messageId?: string
+  version: 1
+  kind: ActionProposalKind
+  effect: 'write_local' | 'schedule'
+  capability: 'memory' | 'reading_artifact' | 'markdown_file' | 'reading_reminder'
+  title: string
+  target: string
+  preview: string
+  reversible: boolean
+  reversibleDescription: string
+  riskDescription: string
+  payload: Record<string, unknown>
+  createdAt: number
+  expiresAt: number
+  updatedAt: number
+  status: ActionProposalStatus
+  errorCategory?: 'invalid' | 'expired' | 'target_changed' | 'cancelled' | 'execution_failed' | 'unsupported'
+}
+
 export interface ChatMessage {
   id?: string
   parentId?: string
@@ -101,6 +148,7 @@ export interface ChatMessage {
   contextMeta?: ChatMessageContextMeta
   sources?: ChatMessageSource[]
   editConfirmation?: EditConfirmation
+  actionProposal?: ActionProposal
   hidden?: boolean
   sessionId?: string
   sessionTitle?: string
