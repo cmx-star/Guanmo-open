@@ -92,12 +92,15 @@ export function WorkspaceRoots({ onOpenFile }: WorkspaceRootsProps) {
           <p>尚未添加工作区</p>
           <p className="mt-1 text-gm-text-disabled">仍可正常打开单个 Markdown 文件</p>
         </div>
-      ) : workspaceRoots.map((root) => {
+      ) : workspaceRoots.map((root, index) => {
         const tree = workspaceTrees[root.id]
         const expanded = !collapsedRootIds.has(root.id)
         const working = workingRootId === root.id
         return (
-          <section key={root.id} className="rounded-lg border border-gm-border-subtle bg-gm-surface-elevated/40 px-1.5 py-1">
+          <section
+            key={root.id}
+            className={`px-1.5 py-2 ${index > 0 ? 'border-t border-gm-border-subtle' : ''}`}
+          >
             <div className="flex min-w-0 items-center gap-1">
               <button
                 type="button"
