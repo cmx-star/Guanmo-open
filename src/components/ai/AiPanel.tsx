@@ -40,6 +40,10 @@ import {
   editReadingReminderTime,
   retryReadingReminder,
 } from '@/services/readingReminders'
+import {
+  READING_REMINDER_DEVELOPMENT_MESSAGE,
+  READING_REMINDER_FEATURE_AVAILABLE,
+} from '@/services/readingReminderFeature'
 
 type AiPanelProps = {
   fullscreenDragHandleProps?: {
@@ -105,7 +109,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   }, [])
 
   useEffect(() => {
-    if (panelView === 'reminders') void refreshReminders()
+    if (panelView === 'reminders' && READING_REMINDER_FEATURE_AVAILABLE) void refreshReminders()
   }, [panelView, refreshReminders])
 
   const handleCancelReminder = useCallback(async (id: string) => {
@@ -511,7 +515,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             type={panelView === 'reminders' ? 'default' : 'text'}
             size="small"
             onClick={() => setPanelView('reminders')}
-            title="阅读提醒"
+            title="阅读提醒（功能开发中）"
             icon={
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
@@ -575,14 +579,21 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             onCheckAnchor={checkAnchor}
           />
         ) : panelView === 'reminders' ? (
-          <ReadingRemindersPanel
-            reminders={reminders}
-            loading={remindersLoading}
-            onCancel={handleCancelReminder}
-            onRetry={handleRetryReminder}
-            onEdit={handleEditReminder}
-            onOpenSource={handleOpenReminderSource}
-          />
+          READING_REMINDER_FEATURE_AVAILABLE ? (
+            <ReadingRemindersPanel
+              reminders={reminders}
+              loading={remindersLoading}
+              onCancel={handleCancelReminder}
+              onRetry={handleRetryReminder}
+              onEdit={handleEditReminder}
+              onOpenSource={handleOpenReminderSource}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+              <p className="mb-1 font-bold text-gm-text-secondary">提醒功能开发中</p>
+              <p className="text-caption text-gm-text-tertiary">{READING_REMINDER_DEVELOPMENT_MESSAGE}</p>
+            </div>
+          )
         ) : visibleMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-6 animate-fadeIn">
             {hasMoreHistory && (
@@ -1494,6 +1505,8 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
 })
 
 function ActionProposalCard({ proposal }: { proposal: ActionProposal }) {
+  const reminderUnavailable = proposal.kind === 'create_reading_reminder'
+    && !READING_REMINDER_FEATURE_AVAILABLE
   const statusLabel: Record<ActionProposal['status'], string> = {
     pending: '待确认',
     executing: '执行中',
@@ -1515,7 +1528,11 @@ function ActionProposalCard({ proposal }: { proposal: ActionProposal }) {
         <div className="mt-1 text-caption text-gm-text-secondary">
           {proposal.reversible ? '可撤销' : '不可自动撤销'}：{proposal.reversibleDescription}
         </div>
-        {proposal.status === 'pending' ? (
+        {proposal.status === 'pending' && reminderUnavailable ? (
+          <div className="mt-3 rounded-lg border border-gm-border bg-gm-surface-elevated px-3 py-1.5 text-caption text-gm-text-secondary">
+            {READING_REMINDER_DEVELOPMENT_MESSAGE}
+          </div>
+        ) : proposal.status === 'pending' ? (
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => void import('@/services/actionProposalCommand')

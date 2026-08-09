@@ -6,6 +6,10 @@ import { upsertExplicitMemory } from '@/services/memory/memoryService'
 import { selectPrimaryWorkspacePath, useAppStore } from '@/stores/appStore'
 import type { ReadingArtifactType } from '@/services/database/readingArtifacts'
 import { createReadingReminder } from '@/services/readingReminders'
+import {
+  READING_REMINDER_DEVELOPMENT_MESSAGE,
+  READING_REMINDER_FEATURE_AVAILABLE,
+} from '@/services/readingReminderFeature'
 
 export interface ActionExecutionResult {
   status: 'completed' | 'cancelled'
@@ -54,6 +58,7 @@ registerActionExecutor('create_markdown_note', async (proposal, sourceMessage) =
 })
 
 registerActionExecutor('create_reading_reminder', async (proposal) => {
+  if (!READING_REMINDER_FEATURE_AVAILABLE) throw new Error(READING_REMINDER_DEVELOPMENT_MESSAGE)
   const dueAtUtc = Date.parse(payloadString(proposal, 'dueAt'))
   if (!Number.isFinite(dueAtUtc) || dueAtUtc <= Date.now()) {
     throw new Error('提醒时间已失效')
@@ -132,7 +137,7 @@ export async function confirmActionProposalCommand(id: string): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
     const errorCategory: ActionProposal['errorCategory'] = /来源消息已变化/.test(message)
       ? 'target_changed'
-      : /尚未注册/.test(message)
+      : /尚未注册|功能开发中/.test(message)
         ? 'unsupported'
         : 'execution_failed'
     useChatStore.setState((state) => {

@@ -22,6 +22,10 @@ import {
   type SelectionContextDirection,
 } from './selectionContext'
 import { buildPendingActionResult } from './actionProposal'
+import {
+  READING_REMINDER_DEVELOPMENT_MESSAGE,
+  READING_REMINDER_FEATURE_AVAILABLE,
+} from '@/services/readingReminderFeature'
 
 function validateString(value: unknown, name: string): string | null {
   if (!value || typeof value !== 'string') {
@@ -921,7 +925,7 @@ export function registerBuiltinTools() {
 
   registerTool({
     name: 'propose_create_reading_reminder',
-    description: '提出一次性本地阅读提醒。dueAt 必须是明确的未来 ISO 时间；省略时区偏移和 timezone 时按电脑时区解释。只生成确认卡，不直接注册通知。',
+    description: '提醒功能当前开发中。调用时只返回开发状态，不创建提醒或确认卡。',
     parameters: [
       { name: 'title', type: 'string', description: '提醒标题', required: true },
       { name: 'description', type: 'string', description: '提醒说明', required: false },
@@ -931,19 +935,22 @@ export function registerBuiltinTools() {
     ],
     effect: 'schedule',
     capability: 'reading_reminder',
-    confirmationPolicy: 'required',
+    confirmationPolicy: READING_REMINDER_FEATURE_AVAILABLE ? 'required' : 'never',
     reversibleDescription: '可在提醒列表中取消',
-    execute: async (args) => buildPendingActionResult('create_reading_reminder', {
-      title: args.title,
-      ...(args.description ? { description: args.description } : {}),
-      dueAt: args.dueAt,
-      ...(args.timezone ? { timezone: args.timezone } : {}),
-      ...(args.sourceMessageId ? { sourceMessageId: args.sourceMessageId } : {}),
-    }, {
-      title: '创建一次性阅读提醒',
-      target: String(args.dueAt || ''),
-      preview: `${String(args.title || '')}${args.description ? `\n${String(args.description).slice(0, 800)}` : ''}`,
-    }),
+    execute: async (args) => {
+      if (!READING_REMINDER_FEATURE_AVAILABLE) return READING_REMINDER_DEVELOPMENT_MESSAGE
+      return buildPendingActionResult('create_reading_reminder', {
+        title: args.title,
+        ...(args.description ? { description: args.description } : {}),
+        dueAt: args.dueAt,
+        ...(args.timezone ? { timezone: args.timezone } : {}),
+        ...(args.sourceMessageId ? { sourceMessageId: args.sourceMessageId } : {}),
+      }, {
+        title: '创建一次性阅读提醒',
+        target: String(args.dueAt || ''),
+        preview: `${String(args.title || '')}${args.description ? `\n${String(args.description).slice(0, 800)}` : ''}`,
+      })
+    },
   })
 
   registerTool({

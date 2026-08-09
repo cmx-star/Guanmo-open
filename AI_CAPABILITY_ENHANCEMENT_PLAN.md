@@ -8,31 +8,15 @@
 
 - 项目状态：进行中
 - 当前阶段：阶段 6｜本地阅读提醒与系统通知
-- 阶段状态：进行中（方案 B 已确认，转入 Windows 原生计划通知）
-- 上次执行结果（阶段 5 自动化部分）：
-  - 工具注册表新增 effect、capability、confirmationPolicy 与撤销说明；只读工具保持原行为，副作用工具必须返回受支持的确认提案
-  - 新增严格 ActionProposal 运行时 schema、15 分钟过期、版本校验、动作/字段白名单与旧 EditConfirmation 兼容解码
-  - 新增保存阅读成果、新建 Markdown 阅读笔记、创建阅读提醒三类高层提案工具；文件提案拒绝任意 path，确认后仍走系统保存对话框
-  - 将既有 save_memory 收敛为确认提案；确认执行器支持授权重验、重复确认幂等、取消、目标变化、失败分类与匿名状态
-  - Agent session/useAiChat/chat metadata/AiPanel 已接入通用行动确认卡；确认历史解码与执行命令按需加载以满足 bundle budget
-  - 新增 actionProposal.test.ts、test:action-proposals 与 runtime/routing 定向覆盖
-- 验证结果：
-  - `npm run test:action-proposals`：通过（7 tests）
-  - `npm run test:agent-parser`：通过
-  - `npx vitest run tests/agent/agentExecutionBudget.test.ts`：通过（7 tests）
-  - `npm run test:routing-matrix`：通过（154 tests）
-  - `npm run test:runtime-schemas`：通过
-  - `npm run typecheck`：通过
-  - 修改文件 ESLint：0 error（7 个预先存在 warning，与本次修改无关）
-  - `npm run build:desktop`：通过，bundle budget 通过（入口 1,349,371 bytes）
-  - `git diff --check`：无错误（仅 CRLF 提示）
-  - 真实桌面行动确认卡验收：未验证（需用户手工执行）
-- 阶段 6 已完成：reading_reminders schema/repository/备份兼容、未来绝对时间与 IANA 时区重验、pending 状态机、提醒列表、取消/启动对账骨架、ActionProposal 执行接入、notification 插件最小初始化与定向测试
-- 阶段 6 当前验证：`npm run test:reading-reminders` 通过（5 tests）；`npm run test:action-proposals` 通过（7 tests）；提醒备份 Rust 定向测试通过；`npm run typecheck`、Rust fmt/check 通过
-- 本阶段剩余：实现仅 Windows 编译的原生计划通知 schedule/list/cancel 受限命令，接回前端适配器；然后补编辑/失败重试/来源返回、完整阶段 6 门禁与安装版人工验收
+- 阶段状态：进行中（用户已暂停提醒功能；6A-6C 实现保留但产品入口标记为开发中，6D 待恢复后继续）
+- 上次执行结果：按用户决定将提醒功能统一切换为“开发中”；提醒管理界面只显示占位且不读取提醒库，应用启动不执行提醒对账，AI 提醒工具不生成确认卡，历史提醒确认卡也不可执行
+- 当前事实：原生通知、SQLite 状态机、管理与自然语言路由实现均保留在功能开关后；当前关闭状态不会新增、读取或对账提醒，但不会删除数据库记录或取消已注册到系统的既有计划通知
+- 最近验证：`test:routing-matrix` 155/155、`test:action-proposals` 10/10、`test:app-warmup`、`npm run typecheck`、修改文件定向 ESLint 0 error（`tools.ts` 保留 3 条既有 warning）；这些结果只验证暂停边界，不代表 Windows 通知真实触发
+- 本阶段执行顺序：6A 原生命令与 Rust 测试 → 6B 前端适配与对账 → 6C 编辑/重试/来源返回 → 6D 自动门禁与 Windows 安装版验收
+- 本阶段剩余：用户恢复提醒功能后重新启用入口与启动对账，并完成 6D Rust check、桌面构建、NSIS/MSI 打包及安装版真实验收；恢复前不得标记阶段完成
 - 已确认实测调整（阶段 7 收口）：AI 回复只保留实际来源展示，不显示阅读范围标签；Markdown/摘要等保存操作收纳为回复卡片外部尾部右侧的小型圆形悬浮入口；知识卡片及其旧数据兼容代码退出产品范围
-- 本阶段允许修改：阶段 6 列出的提醒 schema/repository/备份、通知 service/capability、提醒 UI、Agent 提案执行器与定向测试
-- 阻塞问题：方案决策阻塞已解除。用户已选择方案 B：实现 Windows 原生计划通知，不引入开机自启、后台常驻、Shell 或任务计划程序；Windows 安装版实际触发、取消、重启与应用关闭验收仍需用户侧执行。阶段 1-5 真实模型/桌面手工验收仍需用户执行
+- 本阶段允许修改：阶段 6 列出的 Rust 通知模块/命令、前端通知适配器与提醒状态/UI、必要的兼容 Schema、直接相关测试及本计划
+- 阻塞问题：用户已决定暂不继续提醒功能；另有 C 盘剩余空间为 0，恢复后 Rust check/打包需改用 D 盘构建缓存；Windows 安装版系统弹出仍属于独立真实验收门
 - 下一阶段：阶段 7｜实测反馈收口、综合验收与扩展决策门
 - 远程操作：禁止自动提交、推送、打 tag、创建 PR 或 Release
 
@@ -235,8 +219,9 @@
 - 关键实现：
   - 新增 `reading_reminders` schema/repository、状态机、运行时解码和备份兼容。
   - 确认卡显示绝对时间、星期、时区、来源文档/成果和通知权限状态；模糊时间必须要求用户补充，不能猜测。
-  - 经用户批准后添加并最小初始化 Tauri notification 插件和 capability；不开放无关权限。
-  - 支持创建、列表、编辑时间、取消、启动对账和失败重试；系统通知 ID 与 SQLite 状态保持可恢复映射。
+  - 保留 Tauri notification 插件用于权限与立即通知；未来计划通知通过仅 Windows 编译的受限 Rust command 完成 schedule/list/cancel，不调用插件仅移动端可用的同名 API。
+  - 使用稳定通知 ID 与固定 GuanMo reminder group 隔离系统待发通知；相同 ID 注册必须幂等替换，枚举与取消不得影响其他应用或观墨其他通知。
+  - 支持创建、列表、编辑时间、取消、启动对账和失败重试；系统通知 ID 与 SQLite 状态保持可恢复映射，到期只声明“已到期”，不得把时间经过当成系统已投递证据。
   - 通知点击在平台支持时打开对应成果或来源；无法可靠接管点击时至少打开应用并在提醒列表提供明确“查看来源”。
 - 验收标准：一次性提醒不会重复触发；取消后不再通知；重启和应用关闭场景结果明确；权限拒绝不影响阅读和成果功能。
 - 检查命令：提醒解析/状态机/repository/Agent 提案定向测试、`npm run test:runtime-schemas`、通知 capability 静态检查、`npm run typecheck`、修改文件定向 ESLint、`npm run build:desktop`、Rust fmt/check 与相关定向测试、`git diff --check`；Windows 安装版人工验证权限、未来通知、取消、重启和来源返回。
@@ -286,12 +271,11 @@
 
 ### 阶段 6 实施任务
 
-1. 定义向后兼容的 reading_reminders schema、运行时解码、repository、备份导入导出与一次性提醒状态机。
-2. 确认卡与执行器重验明确未来时间、时区、提案版本和来源；模糊或过去时间拒绝执行。
-3. 核对并接入 Tauri 官方 notification 插件的当前 API，只开放创建/查询/取消提醒所需最小权限。
-4. 实现 pending → 系统注册 → scheduled 的可恢复流程，以及编辑、取消、启动对账和失败重试。
-5. 提供低干扰提醒列表和查看来源入口；权限拒绝不得影响阅读与成果能力。
-6. 执行阶段 6 定向检查并记录 Windows 安装版未验证项。
+1. **6A｜Windows 原生命令**：在 `cfg(windows)` 模块中实现 schedule/list/cancel；使用与现有通知链一致的 AppUserModelID、固定 reminder group 和稳定 ID；Rust 侧校验 ID、非空标题、正文、未来 UTC 时间及时间转换溢出，使用 XML DOM 或等价安全构造避免正文注入。非 Windows 返回稳定的 `unsupported_platform`。
+2. **6A｜依赖与注册**：仅在 Windows target 增加与现有依赖对齐的 `windows 0.61` 最小 features；把三个 command 注册到 `generate_handler!`，不新增 Shell、任务计划程序、后台进程或无关 capability。先用可注入/纯函数边界覆盖时间转换、ID/group 过滤、幂等替换和错误映射。
+3. **6B｜前端适配与状态恢复**：将 `readingReminderNotificationAdapter.schedule/pendingIds/cancel` 接到 Rust command，删除桌面占位异常；保持 SQLite `pending → scheduled`、`cancel_pending → cancelled`，注册或取消失败必须保留可重试状态和匿名错误码。启动对账不得请求权限、不得重复注册；相同提醒 ID 必须幂等。
+4. **6C｜完整产品闭环**：补充失败提醒重试、未来时间编辑（取消旧系统通知后重注册）和提醒列表“查看来源”；权限拒绝只影响提醒。到期状态文案使用“已到期”而非“已投递”，系统关机错过投递窗口时在下次启动保留可见状态。
+5. **6D｜验证与交接**：按最小相关范围完成前端、Rust、Schema、类型、Lint、桌面构建和 diff 检查；构建 Windows 安装包并记录 NSIS/MSI 中实际采用格式。真实验收至少覆盖 1-2 分钟未来通知、应用完全退出后触发、取消后不触发、重启对账、权限拒绝及来源返回；无法在当前环境观察的项目明确记录“未验证”。
 
 ### 阶段 6 验收清单
 
@@ -299,13 +283,15 @@
 - [ ] 只接受未来一次性绝对时间；确认卡显示日期、星期、时区。
 - [ ] 重复确认、重启对账和重试不会重复创建提醒。
 - [ ] 取消后 SQLite 与系统待发通知状态可恢复，不静默丢失。
+- [ ] Windows command 只枚举、替换和取消固定 reminder group 下的观墨通知；标题/正文不会形成 XML 注入。
 - [ ] 通知权限只在用户确认创建提醒时请求；拒绝后阅读功能正常。
-- [ ] 提醒列表可查看来源；平台点击接管不可用时明确降级。
+- [ ] 失败提醒可重试，未来提醒可编辑时间；到期状态不冒充系统已投递。
+- [ ] 提醒列表可查看来源；平台点击接管不可用时明确降级，不为完成阶段强行引入后台激活。
 - [ ] Windows 安装版完成未来通知、取消、重启和来源返回手工验收。
 
 ### 阶段 6 检查命令
 
-提醒解析/状态机/repository/Agent 提案定向测试、`npm run test:runtime-schemas`、通知 capability 静态检查、`npm run typecheck`、修改文件定向 ESLint、`npm run build:desktop`、Rust fmt/check 与相关定向测试、`git diff --check`。
+按源码稳定后的顺序执行：提醒解析/状态机/repository/Agent 提案定向测试、Windows 通知 Rust 定向测试、`npm run test:runtime-schemas`、通知 capability/command 静态检查、`npm run typecheck`、修改文件定向 ESLint、`npm run build:desktop`、Rust fmt/check 与相关定向测试、`git diff --check`。Windows 安装版人工验收单独记录，不用自动门禁替代。
 
 ### 阶段 6 禁止事项
 
@@ -444,9 +430,7 @@ git diff --check
 
 ### 阶段 6｜本地阅读提醒与系统通知
 
-- 状态：进行中（方案 B 已确认，Windows 原生计划通知待实现）
-- 已完成内容：reading_reminders SQLite 真相源与运行时解码；旧备份缺字段兼容的导入导出；未来绝对时间、时区与确认时重验；pending/scheduled/failed/cancel_pending/cancelled/fired 状态机骨架；提醒列表与取消入口；启动对账；ActionProposal 执行器；notification 2.3.3 插件、Rust 初始化及权限检查/请求/立即通知最小 capability；5 项状态机定向测试与 Rust 备份事务测试
-- 当前安全降级：桌面通知适配器不调用类型声明中实际仅移动端可用的 schedule/pending/cancel，也不把未来通知误发为立即通知；持久化失败状态只记录匿名错误码 `desktop_notification_scheduling_unsupported`
-- 验证结果：test:reading-reminders(5)、test:action-proposals(7)、Rust backup reminder 定向测试、typecheck、Rust fmt/check 通过；其余阶段 6 门禁尚未执行
-- 阻塞证据：tauri-plugin-notification 2.3.3 的 `init()` 桌面 invoke handler 仅注册 notify/request_permission/is_permission_granted；schedule/pending/cancel 位于移动端实现。计划文件原先对桌面能力的假设不成立
-- 已确认决策：采用方案 B，实现仅 Windows 编译的原生计划通知 schedule/list/cancel 受限命令；不增加开机自启、后台常驻、Shell 或任务计划程序。完成阶段 6 自动门禁与安装版验收记录前不进入阶段 7
+- 状态：进行中（用户暂停；实现保留，UI 与 AI 入口标记为开发中）
+- 已完成内容：reading_reminders SQLite 真相源、备份兼容与状态机；仅 Windows 的受限 schedule/list/cancel command；固定 AUMID/group、稳定 ID、幂等替换、XML 转义与时间溢出校验；前端适配、启动对账、取消恢复、失败重试、未来改期、来源返回；自然语言路由与电脑时区默认值。暂停处理新增统一功能开关：管理页直接显示开发中且不读库，启动不对账，AI 工具仅返回开发状态，历史确认卡禁止执行
+- 验证结果：暂停前已有 test:reading-reminders(11)、test:runtime-schemas、Windows 通知 Rust 定向测试(4) 与 Rust fmt 证据；暂停改动后 test:routing-matrix(155)、test:action-proposals(10)、test:app-warmup、typecheck、定向 ESLint(0 error，3 条既有 warning) 通过；Windows 安装版真实通知始终未验证
+- 遗留问题：当前不删除数据库记录，也不取消已注册到系统的既有计划通知；用户恢复功能后需重新启用入口与启动对账，改用 D 盘缓存完成 Rust check、桌面构建、NSIS/MSI 和最终 diff 门禁，并独立验收安装版真实触发、退出后触发、取消、重启、权限拒绝及来源返回

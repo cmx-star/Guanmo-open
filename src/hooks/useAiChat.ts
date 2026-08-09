@@ -29,6 +29,7 @@ import {
   toContextTagSources,
   toLocalMessageSources,
 } from '@/services/agent/sourceMetadata'
+import { READING_REMINDER_FEATURE_AVAILABLE } from '@/services/readingReminderFeature'
 
 function getAgentProgressText(step: AgentStep): string {
   if (step.type === 'progress') {
@@ -70,7 +71,9 @@ function getAgentProgressText(step: AgentStep): string {
     case 'propose_create_markdown_note':
       return '正在生成阅读笔记确认卡片...'
     case 'propose_create_reading_reminder':
-      return '正在生成阅读提醒确认卡片...'
+      return READING_REMINDER_FEATURE_AVAILABLE
+        ? '正在生成阅读提醒确认卡片...'
+        : '正在检查提醒功能状态...'
     case 'get_current_time':
       return '正在读取当前系统时间...'
     default:
@@ -91,7 +94,9 @@ function getAgentToolLabel(toolName: string): string {
     replace_current_tab_text: '修改确认卡片生成',
     propose_save_reading_artifact: '阅读成果确认卡片生成',
     propose_create_markdown_note: '阅读笔记确认卡片生成',
-    propose_create_reading_reminder: '阅读提醒确认卡片生成',
+    propose_create_reading_reminder: READING_REMINDER_FEATURE_AVAILABLE
+      ? '阅读提醒确认卡片生成'
+      : '提醒功能状态检查',
     get_current_time: '系统时间读取',
   }[toolName] || `工具 ${toolName}`
 }

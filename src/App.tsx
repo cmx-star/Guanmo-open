@@ -28,6 +28,7 @@ import { detectLegacyData, type LegacyDetectionResult } from './services/databas
 import { LegacyDataNoticeModal } from './components/legacy/LegacyDataNoticeModal'
 import { scheduleIdleTask } from './services/idleScheduler'
 import { singletonManager, SINGLETON_IDS } from './services/singletonPromise'
+import { READING_REMINDER_FEATURE_AVAILABLE } from './services/readingReminderFeature'
 import { eventMarker } from './services/eventMarker'
 import './styles/tokens/official-light.css'
 
@@ -363,9 +364,11 @@ function App() {
         logDuration('ui ready', appInitStartedAt)
 
         // ==================== 首屏后：注册闲时预热任务 ====================
-        void import('@/services/readingReminders')
-          .then(({ reconcileReadingReminders }) => reconcileReadingReminders())
-          .catch((error) => console.warn('[Reminder] startup reconciliation failed:', error))
+        if (READING_REMINDER_FEATURE_AVAILABLE) {
+          void import('@/services/readingReminders')
+            .then(({ reconcileReadingReminders }) => reconcileReadingReminders())
+            .catch((error) => console.warn('[Reminder] startup reconciliation failed:', error))
+        }
 
         scheduleIdleWarmup()
 

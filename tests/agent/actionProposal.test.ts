@@ -9,7 +9,11 @@ import { decodeAgentStepEvent } from '@/services/agent/session'
 import { getTool } from '@/services/agent/toolRegistry'
 import { registerBuiltinTools } from '@/services/agent/tools'
 import { useChatStore } from '@/stores/chatStore'
-import { registerActionExecutor } from '@/services/actionProposalCommand'
+import {
+  executeActionProposalCommand as executeRegisteredAction,
+  registerActionExecutor,
+} from '@/services/actionProposalCommand'
+import { READING_REMINDER_DEVELOPMENT_MESSAGE } from '@/services/readingReminderFeature'
 
 const executeActionProposalCommand = vi.fn()
 
@@ -49,7 +53,7 @@ describe('Agent 行动安全底座', () => {
     expect(getTool('propose_create_reading_reminder')).toMatchObject({
       effect: 'schedule',
       capability: 'reading_reminder',
-      confirmationPolicy: 'required',
+      confirmationPolicy: 'never',
     })
   })
 
@@ -66,22 +70,40 @@ describe('Agent 行动安全底座', () => {
     })
   })
 
-  it('提醒工具省略时区时按电脑时区归一化本地 ISO 时间', async () => {
+  it('提醒工具在开发中时只返回状态，不生成确认提案', async () => {
     const tool = getTool('propose_create_reading_reminder')!
     expect(tool.parameters.find((parameter) => parameter.name === 'timezone')?.required).toBe(false)
     const raw = await tool.execute({
       title: '继续阅读',
       dueAt: '2099-08-11T15:00:00',
     })
-    const pending = decodePendingAction(JSON.parse(raw))
-    expect(pending).toMatchObject({
+    expect(raw).toBe(READING_REMINDER_DEVELOPMENT_MESSAGE)
+    expect(raw).not.toContain('__pendingAction')
+  })
+
+  it('历史提醒确认卡在开发中时不可执行', async () => {
+    const now = Date.now()
+    const proposal: ActionProposal = {
+      version: 1,
+      id: 'reminder-action-1',
+      messageId: 'assistant-1',
       kind: 'create_reading_reminder',
+      effect: 'schedule',
+      capability: 'reading_reminder',
+      confirmationPolicy: 'required',
+      status: 'executing',
       payload: {
         title: '继续阅读',
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        dueAt: '2099-08-11T07:00:00.000Z',
+        timezone: 'Asia/Shanghai',
       },
-    })
-    expect(String(pending?.payload.dueAt)).toMatch(/Z$/)
+      display: { title: '创建一次性阅读提醒', target: '未来时间', preview: '继续阅读' },
+      reversibleDescription: '可在提醒列表中取消',
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + 60_000,
+    }
+    await expect(executeRegisteredAction(proposal)).rejects.toThrow(READING_REMINDER_DEVELOPMENT_MESSAGE)
   })
 
   it('拒绝知识卡片提案', () => {
