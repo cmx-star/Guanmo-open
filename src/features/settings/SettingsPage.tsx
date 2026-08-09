@@ -61,6 +61,8 @@ import { LegacyMigrationEntry } from '@/components/legacy/LegacyMigrationEntry'
 import { KnowledgeBaseManager } from '@/features/settings/KnowledgeBaseManager'
 import { AiShortcutSettings } from '@/features/settings/AiShortcutSettings'
 import { UsageActivity } from '@/features/settings/UsageActivity'
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/services/requestTimeout'
+import { AdvancedTimeoutSettings } from '@/features/settings/AdvancedTimeoutSettings'
 
 const AI_ROUTING_GUIDE_URL = 'https://github.com/we-used-to-be/Guanmo-open/blob/main/docs/AI_ROUTING_GUIDE.md'
 
@@ -458,18 +460,18 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
       }).catch(() => {})
     }, 1000)
     return () => clearTimeout(timer)
-  }, [ai.protocol, ai.baseUrl, ai.apiKey, ai.chatModel, ai.embedding.protocol, ai.embedding.baseUrl, ai.embedding.apiKey, ai.embedding.embeddingModel])
+  }, [ai.protocol, ai.baseUrl, ai.apiKey, ai.chatModel, ai.timeout, ai.embedding.protocol, ai.embedding.baseUrl, ai.embedding.apiKey, ai.embedding.embeddingModel, ai.embedding.timeout])
 
   // 配置变更时清除旧测试结果
   useEffect(() => {
     setChatTestResult(null)
     setShowChatSavePreset(false)
-  }, [ai.protocol, ai.baseUrl, ai.apiKey, ai.chatModel])
+  }, [ai.protocol, ai.baseUrl, ai.apiKey, ai.chatModel, ai.timeout])
 
   useEffect(() => {
     setEmbTestResult(null)
     setShowEmbSavePreset(false)
-  }, [ai.embedding.protocol, ai.embedding.baseUrl, ai.embedding.apiKey, ai.embedding.embeddingModel])
+  }, [ai.embedding.protocol, ai.embedding.baseUrl, ai.embedding.apiKey, ai.embedding.embeddingModel, ai.embedding.timeout])
 
   const handleChatTest = async () => {
     setChatTesting(true)
@@ -737,6 +739,8 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
         </div>
       )}
 
+      <AdvancedTimeoutSettings value={ai.timeout} onChange={(timeout) => updateAiConfig({ timeout })} />
+
       <Sep />
 
       <SectionTitle>Embedding 配置</SectionTitle>
@@ -841,6 +845,8 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
         </div>
       )}
 
+      <AdvancedTimeoutSettings value={ai.embedding.timeout} onChange={(timeout) => updateEmbeddingConfig({ timeout })} />
+
       <Sep />
 
       <SectionTitle>对话参数</SectionTitle>
@@ -920,6 +926,8 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
           </div>
         </div>
       )}
+
+      <AdvancedTimeoutSettings value={webSearch.timeout} onChange={(timeout) => updateWebSearchConfig({ timeout })} />
 
       {isTauri() && <AuthorizedApiOrigins />}
 
@@ -1340,6 +1348,7 @@ function GeneralSettings() {
       provider: 'custom',
       baseUrl: '',
       embeddingModel: '',
+      timeout: DEFAULT_REQUEST_TIMEOUT_MS,
     })
     updateEditorSettings({
       fontSize: 14,
@@ -1357,7 +1366,7 @@ function GeneralSettings() {
       defaultOpenMode: 'preview',
     })
     updateAppearanceSettings({ customCursorEnabled: true, aiMascotAvatarEnabled: false, theme: 'light', lightPalette: 'warm' })
-    updateWebSearchConfig({ provider: 'duckduckgo', apiKey: '', maxResults: 5, customUrl: '' })
+    updateWebSearchConfig({ provider: 'duckduckgo', apiKey: '', maxResults: 5, customUrl: '', timeout: DEFAULT_REQUEST_TIMEOUT_MS })
     updateUsageTrackingSettings({ enabled: true })
     resetAiShortcutActions()
     toast.success('已恢复默认设置')

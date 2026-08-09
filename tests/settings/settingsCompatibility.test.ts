@@ -22,7 +22,9 @@ describe('设置兼容', () => {
 
     expect(state.editor).toMatchObject({ fontSize: 14, lineHeight: 1.65, autoSave: true, modePerformancePolicy: 'balanced', inlinePreviewEdit: true })
     expect(state.appearance).toMatchObject({ theme: 'light', lightPalette: 'warm' })
-    expect(state.webSearch).toMatchObject({ provider: 'duckduckgo', maxResults: 5 })
+    expect(state.webSearch).toMatchObject({ provider: 'duckduckgo', maxResults: 5, timeout: 60000 })
+    expect(state.ai.timeout).toBe(60000)
+    expect(state.ai.embedding.timeout).toBe(60000)
     expect(state.aiShortcutActions).toHaveLength(6)
     expect(state.aiShortcutActions.map((action) => action.label)).toEqual([
       'AI 解释这段',
@@ -43,6 +45,24 @@ describe('设置兼容', () => {
 
     expect(state.editor).toMatchObject({ fontSize: 18, lineHeight: 1.65, fullscreenContentPadding: 88, inlinePreviewEdit: true })
     expect(state.appearance).toMatchObject({ theme: 'dark', lightPalette: 'warm', aiMascotAvatarEnabled: false })
+  })
+
+  it('旧模型和搜索配置缺少超时时补默认值，越界值会被限制', async () => {
+    const defaultedStore = await loadSettingsStore({
+      ai: { baseUrl: 'http://localhost:11434', embedding: { baseUrl: 'http://localhost:11434' } },
+      webSearch: { provider: 'custom', customUrl: 'https://example.com/search' },
+    })
+    expect(defaultedStore.getState().ai.timeout).toBe(60000)
+    expect(defaultedStore.getState().ai.embedding.timeout).toBe(60000)
+    expect(defaultedStore.getState().webSearch.timeout).toBe(60000)
+
+    const clampedStore = await loadSettingsStore({
+      ai: { timeout: 1000, embedding: { timeout: 300000 } },
+      webSearch: { timeout: 900000 },
+    })
+    expect(clampedStore.getState().ai.timeout).toBe(5000)
+    expect(clampedStore.getState().ai.embedding.timeout).toBe(120000)
+    expect(clampedStore.getState().webSearch.timeout).toBe(120000)
   })
 
   it('未知字段不影响已知配置和默认值加载', async () => {

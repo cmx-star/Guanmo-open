@@ -173,6 +173,7 @@ describe('模式资源泄漏回归', () => {
           baseUrl: '',
           apiKey: '',
           embeddingModel: '',
+          timeout: 60000,
         },
       },
       appearance: {

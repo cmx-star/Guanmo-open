@@ -2,6 +2,7 @@ import type { AiProvider, AiConfig, ChatProtocol, EmbeddingConfig, ProviderId, V
 import type { AiServiceStatus } from '../../stores/appStore'
 import { AiConfigError } from './errors'
 import { OpenAICompatibleProvider } from './providers/openaiCompatible'
+import { normalizeRequestTimeoutMs } from '@/services/requestTimeout'
 import { getSearchConfig } from '../webSearch'
 import { externalFetch, UnsupportedCapabilityError } from '../externalHttp'
 
@@ -145,10 +146,8 @@ export function initAiClient(config: AiConfig): AiProvider {
     throw new AiConfigError('Chat model name is required')
   }
 
-  currentConfig = config
-  const effectiveConfig = isLocalApi(config.baseUrl)
-    ? { ...config, timeout: Math.min(config.timeout, 15000) }
-    : config
+  const effectiveConfig = { ...config, timeout: normalizeRequestTimeoutMs(config.timeout) }
+  currentConfig = effectiveConfig
   currentProvider = createChatProvider(effectiveConfig)
   return currentProvider
 }
@@ -179,7 +178,8 @@ export function initEmbeddingClient(config: EmbeddingConfig): AiProvider {
     throw new AiConfigError('Embedding model name is required')
   }
 
-  embeddingConfig = config
+  const effectiveEmbeddingConfig = { ...config, timeout: normalizeRequestTimeoutMs(config.timeout) }
+  embeddingConfig = effectiveEmbeddingConfig
   const fullConfig: AiConfig = {
     protocol: 'openai-chat',
     provider: config.provider || 'custom',
@@ -189,11 +189,11 @@ export function initEmbeddingClient(config: EmbeddingConfig): AiProvider {
     streamEnabled: false,
     webSearchEnabled: false,
     customPreferencePrompt: '',
-    timeout: isLocalApi(config.baseUrl) ? 15000 : 60000,
+    timeout: effectiveEmbeddingConfig.timeout,
     maxContextLength: 8192,
     temperature: 0,
     topP: 1,
-    embedding: config,
+    embedding: effectiveEmbeddingConfig,
   }
   embeddingProvider = new OpenAICompatibleProvider(fullConfig)
   return embeddingProvider

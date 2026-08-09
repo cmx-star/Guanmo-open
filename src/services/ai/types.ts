@@ -1,3 +1,5 @@
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/services/requestTimeout'
+
 /** 对话协议类型 */
 export type ChatProtocol = 'openai-chat' | 'anthropic-messages' | 'openai-responses'
 
@@ -13,6 +15,7 @@ export interface EmbeddingConfig {
   baseUrl: string
   apiKey: string
   embeddingModel: string
+  timeout: number
 }
 
 export interface AiConfig {
@@ -193,7 +196,7 @@ export const DEFAULT_AI_CONFIG: AiConfig = {
   streamEnabled: true,
   webSearchEnabled: false,
   customPreferencePrompt: '',
-  timeout: 60000,
+  timeout: DEFAULT_REQUEST_TIMEOUT_MS,
   maxContextLength: 8192,
   temperature: 0.7,
   topP: 1,
@@ -203,6 +206,7 @@ export const DEFAULT_AI_CONFIG: AiConfig = {
     baseUrl: '',
     apiKey: '',
     embeddingModel: '',
+    timeout: DEFAULT_REQUEST_TIMEOUT_MS,
   },
 }
 

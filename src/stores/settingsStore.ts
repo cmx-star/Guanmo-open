@@ -5,6 +5,7 @@ import { DEFAULT_AI_CONFIG } from '@/services/ai/types'
 import { inferProvider } from '@/services/ai/aiClient'
 import type { WebSearchConfig } from '@/services/webSearch'
 import { updateSearchConfig } from '@/services/webSearch'
+import { DEFAULT_REQUEST_TIMEOUT_MS, normalizeRequestTimeoutMs } from '@/services/requestTimeout'
 import {
   AI_API_KEY_SECRET,
   EMBEDDING_API_KEY_SECRET,
@@ -119,6 +120,7 @@ const DEFAULT_WEB_SEARCH: WebSearchConfig = {
   apiKey: '',
   maxResults: 5,
   customUrl: '',
+  timeout: DEFAULT_REQUEST_TIMEOUT_MS,
 }
 
 const DEFAULT_KNOWLEDGE_SETTINGS: KnowledgeSettings = {
@@ -272,17 +274,27 @@ export const useSettingsStore = create<SettingsState>()(
         // 向后兼容：旧配置没有 protocol/provider，自动补全
         const savedAi = saved.ai
         const patchedAi = savedAi ? {
+          ...current.ai,
           ...savedAi,
+          timeout: normalizeRequestTimeoutMs(savedAi.timeout),
           protocol: savedAi.protocol || 'openai-chat' as const,
           provider: savedAi.provider || (savedAi.baseUrl ? inferProvider(savedAi.baseUrl) : 'custom' as const),
           embedding: savedAi.embedding ? {
+            ...current.ai.embedding,
             ...savedAi.embedding,
             protocol: savedAi.embedding.protocol || 'openai-embedding' as const,
             provider: savedAi.embedding.provider || (savedAi.embedding.baseUrl ? inferProvider(savedAi.embedding.baseUrl) : 'custom' as const),
             apiKey: '',
+            timeout: normalizeRequestTimeoutMs(savedAi.embedding.timeout),
           } : current.ai.embedding,
           apiKey: '',
         } : undefined
+        const patchedWebSearch = saved.webSearch ? {
+          ...current.webSearch,
+          ...saved.webSearch,
+          apiKey: '',
+          timeout: normalizeRequestTimeoutMs(saved.webSearch.timeout),
+        } : current.webSearch
         // 向后兼容：旧自定义预设没有 protocol/provider，补齐后类型断言
         const VALID_CHAT_PROTOCOLS: ChatProtocol[] = ['openai-chat', 'anthropic-messages', 'openai-responses']
         const patchedChatPresets: CustomPreset[] = (saved.customChatPresets || []).map((p) => ({
@@ -348,11 +360,7 @@ export const useSettingsStore = create<SettingsState>()(
             ...saved.appearance,
             aiMascotAvatarEnabled: saved.appearance?.aiMascotAvatarEnabled ?? current.appearance.aiMascotAvatarEnabled,
           },
-          webSearch: {
-            ...current.webSearch,
-            ...saved.webSearch,
-            apiKey: '',
-          },
+          webSearch: patchedWebSearch,
           knowledge: {
             ...current.knowledge,
             ...(saved.knowledge || {}),
