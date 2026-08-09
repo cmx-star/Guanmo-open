@@ -24,6 +24,14 @@ const MODES: Array<{ key: ViewMode; label: string }> = [
   { key: 'dual-preview', label: '对照' },
   { key: 'diff-preview', label: 'Diff' },
 ]
+const FULLSCREEN_THEME_OPTIONS = [
+  { key: 'warm', label: '暖色' },
+  { key: 'plain', label: '浅色' },
+  { key: 'dark', label: '深色' },
+] as const
+
+type FullscreenTheme = typeof FULLSCREEN_THEME_OPTIONS[number]['key']
+
 const PANEL_CONTENT_REVEAL_DELAY = 190
 const FULLSCREEN_PADDING_DEBOUNCE_MS = 150
 
@@ -50,7 +58,9 @@ export function FullscreenControlBar({
   const aiPanelOpen = useAppStore((s) => s.aiPanelOpen)
   const toggleAiPanel = useAppStore((s) => s.toggleAiPanel)
   const theme = useSettingsStore((s) => s.appearance.theme)
+  const lightPalette = useSettingsStore((s) => s.appearance.lightPalette)
   const fullscreenContentPadding = useSettingsStore((s) => s.editor.fullscreenContentPadding)
+  const updateAppearanceSettings = useSettingsStore((s) => s.updateAppearanceSettings)
   const updateEditorSettings = useSettingsStore((s) => s.updateEditorSettings)
   const { exitFullscreen } = useFullscreen()
   const [visible, setVisible] = useState(false)
@@ -61,6 +71,7 @@ export function FullscreenControlBar({
   const [kbStatus, setKbStatus] = useState<'idle' | 'checking' | 'not-indexed' | 'indexed' | 'adding'>('idle')
   const rename = useFileRename()
   const [paddingCardOpen, setPaddingCardOpen] = useState(false)
+  const [themeCardOpen, setThemeCardOpen] = useState(false)
   const hideTimerRef = useRef<number | null>(null)
   const contentTimerRef = useRef<number | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
@@ -115,13 +126,13 @@ export function FullscreenControlBar({
   }, [clearHideTimer, fileDrawerOpen, onCloseFileDrawer, switchPanel])
 
   const scheduleHide = useCallback(() => {
-    if (fileDrawerOpen || paddingCardOpen) return
+    if (fileDrawerOpen || paddingCardOpen || themeCardOpen) return
     clearHideTimer()
     hideTimerRef.current = window.setTimeout(() => {
       setVisible(false)
       if (!contextMenu) switchPanel(false)
     }, tabMode ? 2200 : 700)
-  }, [clearHideTimer, contextMenu, fileDrawerOpen, paddingCardOpen, switchPanel, tabMode])
+  }, [clearHideTimer, contextMenu, fileDrawerOpen, paddingCardOpen, switchPanel, tabMode, themeCardOpen])
 
   useEffect(() => () => {
     clearHideTimer()
@@ -154,6 +165,12 @@ export function FullscreenControlBar({
         setPaddingCardOpen(false)
         return
       }
+      if (themeCardOpen) {
+        e.preventDefault()
+        e.stopPropagation()
+        setThemeCardOpen(false)
+        return
+      }
       if (fileDrawerOpen) {
         const target = e.target as HTMLElement | null
         if (target?.closest('[data-fullscreen-file-drawer] input')) return
@@ -182,18 +199,19 @@ export function FullscreenControlBar({
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [contextMenu, exitFullscreen, fileDrawerOpen, onCloseFileDrawer, paddingCardOpen, switchPanel, tabMode])
+  }, [contextMenu, exitFullscreen, fileDrawerOpen, onCloseFileDrawer, paddingCardOpen, switchPanel, tabMode, themeCardOpen])
 
   useEffect(() => {
-    if (!paddingCardOpen) return
+    if (!paddingCardOpen && !themeCardOpen) return
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest('[data-fullscreen-padding-control]')) return
+      if (target?.closest('[data-fullscreen-padding-control], [data-fullscreen-theme-control]')) return
       setPaddingCardOpen(false)
+      setThemeCardOpen(false)
     }
     window.addEventListener('pointerdown', handlePointerDown, true)
     return () => window.removeEventListener('pointerdown', handlePointerDown, true)
-  }, [paddingCardOpen])
+  }, [paddingCardOpen, themeCardOpen])
 
   useLayoutEffect(() => {
     const shell = shellRef.current
@@ -230,15 +248,27 @@ export function FullscreenControlBar({
     }
   })
 
-  const toggleTheme = useCallback(() => {
-    useSettingsStore.getState().updateAppearanceSettings({ theme: theme === 'dark' ? 'light' : 'dark' })
-  }, [theme])
-
   const togglePaddingCard = useCallback(() => {
     clearHideTimer()
     setVisible(true)
+    setThemeCardOpen(false)
     setPaddingCardOpen((open) => !open)
   }, [clearHideTimer])
+
+  const toggleThemeCard = useCallback(() => {
+    clearHideTimer()
+    setVisible(true)
+    setPaddingCardOpen(false)
+    setThemeCardOpen((open) => !open)
+  }, [clearHideTimer])
+
+  const selectFullscreenTheme = useCallback((nextTheme: FullscreenTheme) => {
+    if (nextTheme === 'dark') {
+      updateAppearanceSettings({ theme: 'dark' })
+      return
+    }
+    updateAppearanceSettings({ theme: 'light', lightPalette: nextTheme })
+  }, [updateAppearanceSettings])
 
   const contextTab = contextMenu ? tabs.find((tab) => tab.id === contextMenu.tabId) : null
 
@@ -411,9 +441,17 @@ export function FullscreenControlBar({
                   边距
                 </BubbleButton>
               </div>
-              <BubbleButton onClick={toggleTheme} title={theme === 'dark' ? '切换为浅色主题' : '切换为深色主题'}>
-                主题
-              </BubbleButton>
+              <div data-fullscreen-theme-control="true">
+                <BubbleButton
+                  onClick={toggleThemeCard}
+                  active={themeCardOpen}
+                  title="选择主题"
+                  ariaExpanded={themeCardOpen}
+                  ariaControls="fullscreen-theme-card"
+                >
+                  主题
+                </BubbleButton>
+              </div>
               <BubbleButton onClick={() => void exitFullscreen()} title="退出全屏">
                 退出
               </BubbleButton>
@@ -516,6 +554,25 @@ export function FullscreenControlBar({
               <span>紧凑</span>
               <span>宽松</span>
             </div>
+          </div>
+        )}
+
+        {themeCardOpen && (
+          <div
+            id="fullscreen-theme-card"
+            data-fullscreen-theme-control="true"
+            role="dialog"
+            aria-label="选择主题"
+            className="gm-fullscreen-spacing-card absolute left-1/2 top-[calc(100%+10px)] w-[min(340px,calc(100vw-32px))] -translate-x-1/2 rounded-2xl border p-4"
+          >
+            <div>
+              <div className="text-body font-bold text-gm-text">主题</div>
+              <div className="mt-0.5 text-caption text-gm-text-tertiary">选择阅读与控制条配色</div>
+            </div>
+            <FullscreenThemeSegmented
+              value={theme === 'dark' ? 'dark' : lightPalette}
+              onChange={selectFullscreenTheme}
+            />
           </div>
         )}
       </div>
@@ -644,4 +701,30 @@ function BubbleButton({
 
 function Separator() {
   return <div className="mx-1.5 h-4 w-px bg-gm-border-subtle" />
+}
+
+function FullscreenThemeSegmented({
+  value,
+  onChange,
+}: {
+  value: FullscreenTheme
+  onChange: (value: FullscreenTheme) => void
+}) {
+  return (
+    <div className="gm-light-palette-segmented gm-fullscreen-theme-segmented mt-3" role="radiogroup" aria-label="主题">
+      {FULLSCREEN_THEME_OPTIONS.map((option) => (
+        <button
+          key={option.key}
+          type="button"
+          className="gm-light-palette-segmented__item"
+          data-active={value === option.key}
+          role="radio"
+          aria-checked={value === option.key}
+          onClick={() => onChange(option.key)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
 }
