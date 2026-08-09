@@ -184,8 +184,8 @@ export function AppLayout() {
   }, [])
 
   const toggleTheme = useCallback(() => {
-    const theme = useSettingsStore.getState().appearance.theme
-    useSettingsStore.getState().updateAppearanceSettings({ theme: theme === 'dark' ? 'light' : 'dark' })
+    const { appearance, updateAppearanceSettings } = useSettingsStore.getState()
+    updateAppearanceSettings({ themeId: appearance.themeId === 'dark' ? appearance.lastLightThemeId : 'dark' })
   }, [])
 
   const runAfterNormalLayout = useCallback(async (action: () => void | Promise<void>) => {
@@ -407,9 +407,9 @@ export function AppLayout() {
 
       {/* Search highlight styles (CSS Highlight API) */}
       <style>{`
-        ::highlight(search-highlight) { background-color: rgba(251, 191, 36, 0.35); }
-        ::highlight(search-highlight-active) { background-color: rgba(251, 191, 36, 0.7); }
-        ::highlight(preview-context-selection) { background-color: rgba(58, 175, 164, 0.28); }
+        ::highlight(search-highlight) { background-color: color-mix(in srgb, var(--gm-warning) 35%, transparent); }
+        ::highlight(search-highlight-active) { background-color: color-mix(in srgb, var(--gm-warning) 70%, transparent); }
+        ::highlight(preview-context-selection) { background-color: color-mix(in srgb, var(--gm-primary) 28%, transparent); }
       `}</style>
     </div>
   )

@@ -177,8 +177,8 @@ describe('模式资源泄漏回归', () => {
         },
       },
       appearance: {
-        theme: 'light',
-        lightPalette: 'warm',
+        themeId: 'warm',
+        lastLightThemeId: 'warm',
         customCursorEnabled: false,
         aiMascotAvatarEnabled: false,
       },

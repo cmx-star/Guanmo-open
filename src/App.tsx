@@ -29,6 +29,9 @@ import { LegacyDataNoticeModal } from './components/legacy/LegacyDataNoticeModal
 import { scheduleIdleTask } from './services/idleScheduler'
 import { singletonManager, SINGLETON_IDS } from './services/singletonPromise'
 import { eventMarker } from './services/eventMarker'
+import './styles/tokens/official-light.css'
+
+syncDocumentTheme(useSettingsStore.getState().appearance.themeId)
 
 const DevPerfMonitorPanel = import.meta.env.DEV
   ? lazy(() => import('./components/devtools/PerfMonitorPanel').then((module) => ({ default: module.PerfMonitorPanel })))
@@ -294,8 +297,7 @@ function App() {
   const [appReady, setAppReady] = useState(false)
   const [legacyDetection, setLegacyDetection] = useState<LegacyDetectionResult | null>(null)
   const customCursorEnabled = useSettingsStore((s) => s.appearance.customCursorEnabled)
-  const theme = useSettingsStore((s) => s.appearance.theme)
-  const lightPalette = useSettingsStore((s) => s.appearance.lightPalette)
+  const themeId = useSettingsStore((s) => s.appearance.themeId)
   useExternalFileOpen(appReady)
   useUsageTracking(appReady)
 
@@ -316,8 +318,8 @@ function App() {
   }, [])
 
   useLayoutEffect(() => {
-    syncDocumentTheme(theme, lightPalette)
-  }, [lightPalette, theme])
+    syncDocumentTheme(themeId)
+  }, [themeId])
 
   // 禁用浏览器默认右键菜单
   useEffect(() => {

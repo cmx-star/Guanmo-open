@@ -2207,7 +2207,7 @@ function PaneHeader({ title, onClose }: { title: string; onClose?: () => void })
   return (
     <div className="flex items-center justify-between mb-4 pb-2 border-b border-gm-border-subtle">
       <div className="flex items-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#19c8b9" strokeWidth="1.5">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gm-primary)" strokeWidth="1.5">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
         </svg>

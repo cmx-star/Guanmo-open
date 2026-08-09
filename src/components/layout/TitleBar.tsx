@@ -74,11 +74,12 @@ export function TitleBar() {
     if (view) redo({ state: view.state, dispatch: view.dispatch })
   }, [])
 
-  const theme = useSettingsStore((s) => s.appearance.theme)
+  const themeId = useSettingsStore((s) => s.appearance.themeId)
+  const lastLightThemeId = useSettingsStore((s) => s.appearance.lastLightThemeId)
   const toggleTheme = useCallback(() => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    useSettingsStore.getState().updateAppearanceSettings({ theme: next })
-  }, [theme])
+    const next = themeId === 'dark' ? lastLightThemeId : 'dark'
+    useSettingsStore.getState().updateAppearanceSettings({ themeId: next })
+  }, [lastLightThemeId, themeId])
 
   return (
     <div className="h-[38px] flex items-center bg-gm-surface border-b border-gm-border-subtle select-none flex-shrink-0">
@@ -132,9 +133,9 @@ export function TitleBar() {
         <button
           onClick={toggleTheme}
           className="h-full w-10 flex items-center justify-center text-gm-text-secondary hover:bg-gm-surface-hover transition-colors"
-          title={theme === 'dark' ? '切换为浅色模式' : '切换为深色模式'}
+          title={themeId === 'dark' ? '切换为上次浅色主题' : '切换为深色主题'}
         >
-          {theme === 'dark' ? (
+          {themeId === 'dark' ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="5" />
               <line x1="12" y1="1" x2="12" y2="3" />

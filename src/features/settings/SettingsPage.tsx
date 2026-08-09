@@ -63,6 +63,7 @@ import { AiShortcutSettings } from '@/features/settings/AiShortcutSettings'
 import { UsageActivity } from '@/features/settings/UsageActivity'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/services/requestTimeout'
 import { AdvancedTimeoutSettings } from '@/features/settings/AdvancedTimeoutSettings'
+import { ThemePicker } from '@/features/settings/ThemePicker'
 
 const AI_ROUTING_GUIDE_URL = 'https://github.com/we-used-to-be/Guanmo-open/blob/main/docs/AI_ROUTING_GUIDE.md'
 
@@ -271,13 +272,6 @@ const MODE_PERFORMANCE_STOP_POSITIONS = ['var(--gm-mode-prewarm-stop-edge)', '50
 const MODE_PERFORMANCE_LABEL_POSITIONS = ['var(--gm-mode-prewarm-stop-edge)', 'calc(50% - 14px)', 'calc(100% - var(--gm-mode-prewarm-stop-edge) - 26px)'] as const
 const MODE_PERFORMANCE_FILL_WIDTHS = ['var(--gm-mode-prewarm-thumb-size)', 'calc(50% + var(--gm-mode-prewarm-thumb-size) / 2)', '100%'] as const
 
-const LIGHT_PALETTE_OPTIONS = [
-  { key: 'warm', label: '暖色' },
-  { key: 'plain', label: '浅色' },
-] as const
-
-type LightPalette = typeof LIGHT_PALETTE_OPTIONS[number]['key']
-
 function getModePerformanceIndex(value: ModePerformanceLevel) {
   return Math.max(0, MODE_PERFORMANCE_KEYS.indexOf(value))
 }
@@ -378,32 +372,6 @@ function ModePerformanceSlider({
           onKeyDown={handleKeyDown}
         />
       </div>
-    </div>
-  )
-}
-
-function LightPaletteSegmented({
-  value,
-  onChange,
-}: {
-  value: LightPalette
-  onChange: (value: LightPalette) => void
-}) {
-  return (
-    <div className="gm-light-palette-segmented" role="radiogroup" aria-label="明亮配色">
-      {LIGHT_PALETTE_OPTIONS.map((option) => (
-        <button
-          key={option.key}
-          type="button"
-          className="gm-light-palette-segmented__item"
-          data-active={value === option.key}
-          role="radio"
-          aria-checked={value === option.key}
-          onClick={() => onChange(option.key)}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   )
 }
@@ -1365,7 +1333,7 @@ function GeneralSettings() {
       modePerformancePolicy: 'balanced',
       defaultOpenMode: 'preview',
     })
-    updateAppearanceSettings({ customCursorEnabled: true, aiMascotAvatarEnabled: false, theme: 'light', lightPalette: 'warm' })
+    updateAppearanceSettings({ customCursorEnabled: true, aiMascotAvatarEnabled: false, themeId: 'warm' })
     updateWebSearchConfig({ provider: 'duckduckgo', apiKey: '', maxResults: 5, customUrl: '', timeout: DEFAULT_REQUEST_TIMEOUT_MS })
     updateUsageTrackingSettings({ enabled: true })
     resetAiShortcutActions()
@@ -1503,15 +1471,13 @@ function GeneralSettings() {
       )}
 
       <SectionTitle>外观</SectionTitle>
-      <SettingField label="深色模式" description="切换夜间写作配色，无需重启">
-        <Switch checked={appearance.theme === 'dark'} onChange={(v) => updateAppearanceSettings({ theme: v ? 'dark' : 'light' })} />
-      </SettingField>
-      <SettingField label="明亮配色" description="仅影响明亮模式；深色模式下会在下次切回明亮时生效">
-        <LightPaletteSegmented
-          value={appearance.lightPalette}
-          onChange={(lightPalette) => updateAppearanceSettings({ lightPalette })}
-        />
-      </SettingField>
+      <div className="gm-theme-setting py-1.5">
+        <div>
+          <span className="text-body text-gm-text">主题</span>
+          <p className="mt-0.5 text-caption text-gm-text-tertiary">选择后立即应用到编辑器、预览和应用界面</p>
+        </div>
+        <ThemePicker value={appearance.themeId} onChange={(themeId) => updateAppearanceSettings({ themeId })} />
+      </div>
       <SettingField label="定制光标" description="使用 animal-island-ui 的手作风光标">
         <Switch checked={appearance.customCursorEnabled} onChange={(v) => updateAppearanceSettings({ customCursorEnabled: v })} />
       </SettingField>

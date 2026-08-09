@@ -39,15 +39,16 @@ interface EditorSettings {
   defaultOpenMode: 'edit' | 'preview'
 }
 
+export const THEME_IDS = ['warm', 'light', 'dark', 'paper', 'github-light'] as const
+export type ThemeId = typeof THEME_IDS[number]
+export type NonDarkThemeId = Exclude<ThemeId, 'dark'>
+
 interface AppearanceSettings {
   customCursorEnabled: boolean
   aiMascotAvatarEnabled: boolean
-  theme: 'light' | 'dark'
-  lightPalette: 'warm' | 'plain'
+  themeId: ThemeId
+  lastLightThemeId: NonDarkThemeId
 }
-
-type AppearanceTheme = AppearanceSettings['theme']
-type LightPalette = AppearanceSettings['lightPalette']
 
 interface KnowledgeSettings {
   autoIndexEnabled: boolean
@@ -111,8 +112,8 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   customCursorEnabled: false,
   aiMascotAvatarEnabled: false,
-  theme: 'light',
-  lightPalette: 'warm',
+  themeId: 'warm',
+  lastLightThemeId: 'warm',
 }
 
 const DEFAULT_WEB_SEARCH: WebSearchConfig = {
@@ -131,14 +132,39 @@ const DEFAULT_USAGE_TRACKING_SETTINGS: UsageTrackingSettings = {
   enabled: true,
 }
 
-const THEME_SWITCH_THROTTLE_MS = 180
-let lastThemeSwitchAt = 0
+export function resolveThemeId(appearance: unknown): ThemeId {
+  if (!appearance || typeof appearance !== 'object') return DEFAULT_APPEARANCE_SETTINGS.themeId
+  const saved = appearance as Record<string, unknown>
+  if (typeof saved.themeId === 'string' && THEME_IDS.includes(saved.themeId as ThemeId)) {
+    return saved.themeId as ThemeId
+  }
+  if (saved.theme === 'dark') return 'dark'
+  if (saved.theme === 'light' && saved.lightPalette === 'plain') return 'light'
+  return 'warm'
+}
 
-export function syncDocumentTheme(theme: AppearanceTheme, lightPalette: LightPalette = 'warm') {
+export function resolveLastLightThemeId(appearance: unknown): NonDarkThemeId {
+  if (!appearance || typeof appearance !== 'object') return DEFAULT_APPEARANCE_SETTINGS.lastLightThemeId
+  const saved = appearance as Record<string, unknown>
+  if (
+    typeof saved.lastLightThemeId === 'string'
+    && THEME_IDS.includes(saved.lastLightThemeId as ThemeId)
+    && saved.lastLightThemeId !== 'dark'
+  ) {
+    return saved.lastLightThemeId as NonDarkThemeId
+  }
+  const themeId = resolveThemeId(saved)
+  if (themeId !== 'dark') return themeId
+  return saved.lightPalette === 'plain' ? 'light' : 'warm'
+}
+
+export function syncDocumentTheme(themeId: ThemeId) {
   if (typeof document === 'undefined') return
   const root = document.documentElement
-  root.dataset.theme = theme
-  root.dataset.lightPalette = lightPalette
+  root.dataset.themeId = themeId
+  root.dataset.theme = themeId === 'dark' ? 'dark' : 'light'
+  root.style.colorScheme = themeId === 'dark' ? 'dark' : 'light'
+  delete root.dataset.lightPalette
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -197,20 +223,12 @@ export const useSettingsStore = create<SettingsState>()(
 
       updateAppearanceSettings: (settings) =>
         set((s) => {
-          let nextSettings = settings
-          if (settings.theme && settings.theme !== s.appearance.theme) {
-            const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-            if (now - lastThemeSwitchAt < THEME_SWITCH_THROTTLE_MS) {
-              const { theme: _theme, ...rest } = settings
-              nextSettings = rest
-            } else {
-              lastThemeSwitchAt = now
-            }
+          const appearance = { ...s.appearance, ...settings }
+          if (settings.themeId && settings.themeId !== 'dark') {
+            appearance.lastLightThemeId = settings.themeId
           }
-          if (Object.keys(nextSettings).length === 0) return s
-          const appearance = { ...s.appearance, ...nextSettings }
-          if ('theme' in nextSettings || 'lightPalette' in nextSettings) {
-            syncDocumentTheme(appearance.theme, appearance.lightPalette)
+          if ('themeId' in settings) {
+            syncDocumentTheme(appearance.themeId)
           }
           return { appearance }
         }),
@@ -355,11 +373,19 @@ export const useSettingsStore = create<SettingsState>()(
             }
             return { ...mergedEditor, modePerformancePolicy: migrated }
           })(),
-          appearance: {
-            ...current.appearance,
-            ...saved.appearance,
-            aiMascotAvatarEnabled: saved.appearance?.aiMascotAvatarEnabled ?? current.appearance.aiMascotAvatarEnabled,
-          },
+          appearance: (() => {
+            const savedAppearance = (saved.appearance ?? {}) as unknown as Record<string, unknown>
+            return {
+              customCursorEnabled: typeof savedAppearance.customCursorEnabled === 'boolean'
+                ? savedAppearance.customCursorEnabled
+                : current.appearance.customCursorEnabled,
+              aiMascotAvatarEnabled: typeof savedAppearance.aiMascotAvatarEnabled === 'boolean'
+                ? savedAppearance.aiMascotAvatarEnabled
+                : current.appearance.aiMascotAvatarEnabled,
+              themeId: resolveThemeId(savedAppearance),
+              lastLightThemeId: resolveLastLightThemeId(savedAppearance),
+            }
+          })(),
           webSearch: patchedWebSearch,
           knowledge: {
             ...current.knowledge,

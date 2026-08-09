@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { invoke } from '@tauri-apps/api/core'
 import { useEditorStore, type Tab } from '@/stores/editorStore'
 import { useAppStore } from '@/stores/appStore'
-import { FULLSCREEN_CONTENT_PADDING, useSettingsStore } from '@/stores/settingsStore'
+import { FULLSCREEN_CONTENT_PADDING, useSettingsStore, type ThemeId } from '@/stores/settingsStore'
 import { addFileContextTag, summarizeFileWithAi } from '@/services/aiContext'
 import { addKnowledgeDocument, isKnowledgeDocumentIndexed } from '@/services/rag/knowledgeBase'
 import { isMarkdownPath } from '@/services/rag/indexer'
@@ -26,11 +26,11 @@ const MODES: Array<{ key: ViewMode; label: string }> = [
 ]
 const FULLSCREEN_THEME_OPTIONS = [
   { key: 'warm', label: '暖色' },
-  { key: 'plain', label: '浅色' },
+  { key: 'light', label: '浅色' },
   { key: 'dark', label: '深色' },
-] as const
-
-type FullscreenTheme = typeof FULLSCREEN_THEME_OPTIONS[number]['key']
+  { key: 'paper', label: 'Paper' },
+  { key: 'github-light', label: 'GitHub Light' },
+] satisfies Array<{ key: ThemeId; label: string }>
 
 const PANEL_CONTENT_REVEAL_DELAY = 190
 const FULLSCREEN_PADDING_DEBOUNCE_MS = 150
@@ -57,8 +57,7 @@ export function FullscreenControlBar({
   const favorites = useEditorStore((s) => s.favorites)
   const aiPanelOpen = useAppStore((s) => s.aiPanelOpen)
   const toggleAiPanel = useAppStore((s) => s.toggleAiPanel)
-  const theme = useSettingsStore((s) => s.appearance.theme)
-  const lightPalette = useSettingsStore((s) => s.appearance.lightPalette)
+  const themeId = useSettingsStore((s) => s.appearance.themeId)
   const fullscreenContentPadding = useSettingsStore((s) => s.editor.fullscreenContentPadding)
   const updateAppearanceSettings = useSettingsStore((s) => s.updateAppearanceSettings)
   const updateEditorSettings = useSettingsStore((s) => s.updateEditorSettings)
@@ -278,12 +277,8 @@ export function FullscreenControlBar({
     setThemeCardOpen((open) => !open)
   }, [clearHideTimer])
 
-  const selectFullscreenTheme = useCallback((nextTheme: FullscreenTheme) => {
-    if (nextTheme === 'dark') {
-      updateAppearanceSettings({ theme: 'dark' })
-      return
-    }
-    updateAppearanceSettings({ theme: 'light', lightPalette: nextTheme })
+  const selectFullscreenTheme = useCallback((nextTheme: ThemeId) => {
+    updateAppearanceSettings({ themeId: nextTheme })
   }, [updateAppearanceSettings])
 
   const contextTab = contextMenu ? tabs.find((tab) => tab.id === contextMenu.tabId) : null
@@ -591,7 +586,7 @@ export function FullscreenControlBar({
               <div className="mt-0.5 text-caption text-gm-text-tertiary">选择阅读与控制条配色</div>
             </div>
             <FullscreenThemeSegmented
-              value={theme === 'dark' ? 'dark' : lightPalette}
+              value={themeId}
               onChange={selectFullscreenTheme}
             />
           </div>
@@ -728,8 +723,8 @@ function FullscreenThemeSegmented({
   value,
   onChange,
 }: {
-  value: FullscreenTheme
-  onChange: (value: FullscreenTheme) => void
+  value: ThemeId
+  onChange: (value: ThemeId) => void
 }) {
   return (
     <div className="gm-light-palette-segmented gm-fullscreen-theme-segmented mt-3" role="radiogroup" aria-label="主题">
