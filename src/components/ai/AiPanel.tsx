@@ -31,10 +31,15 @@ import {
   type SourceAnchorStatus,
   type AnnotationStructuredContent,
   getAnnotationStructuredContent,
+  loadReadingArtifactById,
   resolveAnnotationPosition,
 } from '@/services/database/readingArtifacts'
 import { loadReadingReminders, type ReadingReminder } from '@/services/database/readingReminders'
-import { cancelReadingReminder } from '@/services/readingReminders'
+import {
+  cancelReadingReminder,
+  editReadingReminderTime,
+  retryReadingReminder,
+} from '@/services/readingReminders'
 
 type AiPanelProps = {
   fullscreenDragHandleProps?: {
@@ -110,6 +115,29 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
       toast.success('提醒已取消')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '取消提醒失败')
+    }
+  }, [refreshReminders])
+
+  const handleRetryReminder = useCallback(async (id: string) => {
+    try {
+      await retryReadingReminder(id)
+      await refreshReminders()
+      toast.success('提醒已重新安排')
+    } catch (error) {
+      await refreshReminders()
+      toast.error(error instanceof Error ? error.message : '重试提醒失败')
+    }
+  }, [refreshReminders])
+
+  const handleEditReminder = useCallback(async (id: string, dueAtUtc: number, timezone: string) => {
+    try {
+      await editReadingReminderTime(id, dueAtUtc, timezone)
+      await refreshReminders()
+      toast.success('提醒时间已更新')
+    } catch (error) {
+      await refreshReminders()
+      toast.error(error instanceof Error ? error.message : '修改提醒失败')
+      throw error
     }
   }, [refreshReminders])
 
@@ -344,6 +372,30 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     }
   }, [])
 
+  const handleOpenReminderSource = useCallback(async (reminder: ReadingReminder) => {
+    if (reminder.sourceArtifactId) {
+      const artifact = await loadReadingArtifactById(reminder.sourceArtifactId)
+      if (artifact) {
+        await handleOpenArtifactSource(artifact)
+        return
+      }
+    }
+    if (reminder.sourceFilePath) {
+      await handleOpenRagSource({ filePath: reminder.sourceFilePath, startLine: 1, endLine: 1 })
+      return
+    }
+    if (reminder.sourceMessageId && messages.some((message) => message.id === reminder.sourceMessageId)) {
+      setPanelView('chat')
+      window.setTimeout(() => {
+        const target = Array.from(document.querySelectorAll<HTMLElement>('[data-chat-message-id]'))
+          .find((element) => element.dataset.chatMessageId === reminder.sourceMessageId)
+        target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }, 0)
+      return
+    }
+    toast.error('提醒来源当前不可用')
+  }, [handleOpenArtifactSource, handleOpenRagSource, messages])
+
   const handleSaveAssistantAsMarkdown = useCallback(async (content: string, sources?: ChatMessageSource[]) => {
     await saveAssistantMessageAsMarkdown(content, sources)
   }, [])
@@ -527,6 +579,9 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             reminders={reminders}
             loading={remindersLoading}
             onCancel={handleCancelReminder}
+            onRetry={handleRetryReminder}
+            onEdit={handleEditReminder}
+            onOpenSource={handleOpenReminderSource}
           />
         ) : visibleMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-6 animate-fadeIn">
@@ -683,11 +738,20 @@ function ReadingRemindersPanel({
   reminders,
   loading,
   onCancel,
+  onRetry,
+  onEdit,
+  onOpenSource,
 }: {
   reminders: ReadingReminder[]
   loading: boolean
   onCancel: (id: string) => void | Promise<void>
+  onRetry: (id: string) => void | Promise<void>
+  onEdit: (id: string, dueAtUtc: number, timezone: string) => void | Promise<void>
+  onOpenSource: (reminder: ReadingReminder) => void | Promise<void>
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTime, setEditingTime] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
   if (loading) {
     return <div className="p-6 text-center text-caption text-gm-text-secondary">正在加载提醒…</div>
   }
@@ -702,7 +766,12 @@ function ReadingRemindersPanel({
   return (
     <div className="space-y-2 p-3">
       {reminders.map((reminder) => {
-        const cancellable = ['pending', 'scheduled', 'cancel_pending'].includes(reminder.status)
+        const cancellable = ['pending', 'scheduled', 'cancel_pending', 'failed'].includes(reminder.status)
+        const editable = reminder.dueAtUtc > Date.now()
+          && !['cancelled', 'fired', 'cancel_pending'].includes(reminder.status)
+          && reminder.errorCode !== 'notification_cancel_failed'
+        const hasSource = Boolean(reminder.sourceArtifactId || reminder.sourceFilePath || reminder.sourceMessageId)
+        const editing = editingId === reminder.id
         return (
           <div key={reminder.id} className="rounded-xl border border-gm-border bg-gm-surface-elevated p-3">
             <div className="flex items-start gap-2">
@@ -722,22 +791,85 @@ function ReadingRemindersPanel({
                   {REMINDER_STATUS_LABELS[reminder.status]}
                   {reminder.errorCode ? ` · ${reminder.errorCode}` : ''}
                 </p>
+                {editing && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      value={editingTime}
+                      min={toDatetimeLocalValue(Date.now() + 60_000)}
+                      onChange={(event) => setEditingTime(event.target.value)}
+                      className="min-w-0 rounded-lg border border-gm-border bg-gm-surface px-2 py-1 text-micro text-gm-text"
+                    />
+                    <Button
+                      type="default"
+                      size="small"
+                      disabled={savingEdit || !editingTime}
+                      onClick={async () => {
+                        const dueAtUtc = new Date(editingTime).getTime()
+                        if (!Number.isFinite(dueAtUtc) || dueAtUtc <= Date.now()) {
+                          toast.error('请选择未来时间')
+                          return
+                        }
+                        setSavingEdit(true)
+                        try {
+                          await onEdit(
+                            reminder.id,
+                            dueAtUtc,
+                            Intl.DateTimeFormat().resolvedOptions().timeZone,
+                          )
+                          setEditingId(null)
+                        } finally {
+                          setSavingEdit(false)
+                        }
+                      }}
+                    >
+                      保存
+                    </Button>
+                    <Button type="text" size="small" onClick={() => setEditingId(null)}>取消编辑</Button>
+                  </div>
+                )}
               </div>
-              {cancellable && (
-                <button
-                  type="button"
-                  onClick={() => void onCancel(reminder.id)}
-                  className="rounded-lg border border-gm-border px-2 py-1 text-micro text-gm-text-secondary hover:bg-gm-surface-hover hover:text-gm-text"
-                >
-                  取消
-                </button>
-              )}
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                {hasSource && (
+                  <Button type="text" size="small" onClick={() => void onOpenSource(reminder)}>查看来源</Button>
+                )}
+                {reminder.status === 'failed' && (
+                  <Button type="default" size="small" onClick={() => void onRetry(reminder.id)}>重试</Button>
+                )}
+                {editable && !editing && (
+                  <Button
+                    type="default"
+                    size="small"
+                    onClick={() => {
+                      setEditingId(reminder.id)
+                      setEditingTime(toDatetimeLocalValue(reminder.dueAtUtc))
+                    }}
+                  >
+                    改期
+                  </Button>
+                )}
+                {cancellable && (
+                  <Button
+                    type="default"
+                    size="small"
+                    className="text-red-600 hover:text-red-700"
+                    onClick={() => void onCancel(reminder.id)}
+                  >
+                    取消
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         )
       })}
     </div>
   )
+}
+
+function toDatetimeLocalValue(timestamp: number): string {
+  const date = new Date(timestamp)
+  return new Date(timestamp - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
 }
 
 const ARTIFACT_FILTER_OPTIONS: Array<{ value: ReadingArtifactFilter; label: string }> = [

@@ -1,4 +1,6 @@
-import { isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
+
+const DEFAULT_REMINDER_BODY = '该回到观墨继续阅读了。'
 
 export interface ReadingReminderNotificationAdapter {
   ensurePermission(request: boolean): Promise<boolean>
@@ -35,17 +37,25 @@ export const readingReminderNotificationAdapter: ReadingReminderNotificationAdap
       throw new Error('reminder_due_time_invalid')
     }
     await loadNotificationPlugin()
-    throw new Error('desktop_notification_scheduling_unsupported')
+    await invoke('schedule_reading_reminder_notification', {
+      input: {
+        id: input.id,
+        title: input.title,
+        body: input.body?.trim() || DEFAULT_REMINDER_BODY,
+        dueAtUtc: Math.floor(input.dueAtUtc),
+      },
+    })
   },
 
   async pendingIds() {
     await loadNotificationPlugin()
-    throw new Error('desktop_notification_scheduling_unsupported')
+    const ids = await invoke<number[]>('list_pending_reading_reminder_notification_ids')
+    return new Set(ids.filter((id) => Number.isInteger(id) && id > 0))
   },
 
   async cancel(id) {
     await loadNotificationPlugin()
     if (!Number.isInteger(id) || id <= 0) throw new Error('notification_id_invalid')
-    throw new Error('desktop_notification_scheduling_unsupported')
+    await invoke('cancel_reading_reminder_notification', { id })
   },
 }

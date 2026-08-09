@@ -16,6 +16,7 @@ mod api_http;
 mod database_transactions;
 mod perf_monitor;
 mod rag_index;
+mod reading_reminder_notifications;
 use api_http::ApiOriginState;
 
 const SECRET_FILE: &str = "secrets.json";
@@ -1360,6 +1361,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            reading_reminder_notifications::schedule_reading_reminder_notification,
+            reading_reminder_notifications::list_pending_reading_reminder_notification_ids,
+            reading_reminder_notifications::cancel_reading_reminder_notification,
             save_secret,
             load_secret,
             delete_secret,

@@ -68,7 +68,7 @@ registerActionExecutor('create_reading_reminder', async (proposal) => {
     createdTimezone: payloadString(proposal, 'timezone'),
     sourceMessageId: typeof proposal.payload.sourceMessageId === 'string'
       ? proposal.payload.sourceMessageId
-      : null,
+      : proposal.messageId ?? null,
   })
   return { status: 'completed' }
 })

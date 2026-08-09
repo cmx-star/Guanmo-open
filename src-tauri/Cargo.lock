@@ -1664,6 +1664,7 @@ dependencies = [
  "tauri-plugin-sql",
  "tokio",
  "url",
+ "windows 0.61.3",
  "windows-sys 0.60.2",
 ]
 

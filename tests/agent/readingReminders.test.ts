@@ -5,6 +5,21 @@ import type { ReadingReminderNotificationAdapter } from '@/services/readingRemin
 const repository = vi.hoisted(() => ({
   reminders: new Map<string, ReadingReminder>(),
 }))
+const notificationRuntime = vi.hoisted(() => ({
+  invoke: vi.fn(async () => undefined as unknown),
+  isPermissionGranted: vi.fn(async () => true),
+  requestPermission: vi.fn(async () => 'granted'),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: notificationRuntime.invoke,
+  isTauri: () => true,
+}))
+
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  isPermissionGranted: notificationRuntime.isPermissionGranted,
+  requestPermission: notificationRuntime.requestPermission,
+}))
 
 vi.mock('@/services/database/readingReminders', () => ({
   loadReadingReminderById: vi.fn(async (id: string) => repository.reminders.get(id)),
@@ -42,11 +57,16 @@ vi.mock('@/services/database/readingReminders', () => ({
   }),
 }))
 
-import { notificationIdForReminder } from '@/services/readingReminderNotifications'
+import {
+  notificationIdForReminder,
+  readingReminderNotificationAdapter,
+} from '@/services/readingReminderNotifications'
 import {
   cancelReadingReminder,
   createReadingReminder,
+  editReadingReminderTime,
   reconcileReadingReminders,
+  retryReadingReminder,
 } from '@/services/readingReminders'
 
 function reminder(overrides: Partial<ReadingReminder> = {}): ReadingReminder {
@@ -80,7 +100,29 @@ function adapter(overrides: Partial<ReadingReminderNotificationAdapter> = {}): R
 }
 
 describe('reading reminder lifecycle', () => {
-  beforeEach(() => repository.reminders.clear())
+  beforeEach(() => {
+    repository.reminders.clear()
+    notificationRuntime.invoke.mockReset().mockResolvedValue(undefined)
+    notificationRuntime.isPermissionGranted.mockReset().mockResolvedValue(true)
+    notificationRuntime.requestPermission.mockReset().mockResolvedValue('granted')
+  })
+
+  it('uses the restricted native commands and a nonempty default body', async () => {
+    const dueAtUtc = Date.now() + 60_000
+    await readingReminderNotificationAdapter.schedule({ id: 11, title: '复习', dueAtUtc })
+    expect(notificationRuntime.invoke).toHaveBeenCalledWith('schedule_reading_reminder_notification', {
+      input: { id: 11, title: '复习', body: '该回到观墨继续阅读了。', dueAtUtc },
+    })
+
+    notificationRuntime.invoke.mockResolvedValueOnce([11, -1, 0, 12.5, 13])
+    await expect(readingReminderNotificationAdapter.pendingIds()).resolves.toEqual(new Set([11, 13]))
+
+    await readingReminderNotificationAdapter.cancel(11)
+    expect(notificationRuntime.invoke).toHaveBeenLastCalledWith(
+      'cancel_reading_reminder_notification',
+      { id: 11 },
+    )
+  })
 
   it('derives a stable positive 32-bit notification id', () => {
     const id = notificationIdForReminder('reminder-action-1')
@@ -135,5 +177,69 @@ describe('reading reminder lifecycle', () => {
     await cancelReadingReminder('cancel-me', notifications)
     expect(notifications.cancel).toHaveBeenCalledWith(9)
     expect(repository.reminders.get('cancel-me')?.status).toBe('cancelled')
+  })
+
+  it('retries a failed registration without creating another reminder', async () => {
+    repository.reminders.set('retry-me', reminder({
+      id: 'retry-me',
+      status: 'failed',
+      errorCode: 'notification_schedule_failed',
+    }))
+    const notifications = adapter()
+    const retried = await retryReadingReminder('retry-me', notifications)
+    expect(notifications.ensurePermission).toHaveBeenCalledWith(true)
+    expect(notifications.schedule).toHaveBeenCalledTimes(1)
+    expect(retried?.status).toBe('scheduled')
+    expect(repository.reminders.size).toBe(1)
+  })
+
+  it('retries a failed cancellation as cancellation', async () => {
+    repository.reminders.set('retry-cancel', reminder({
+      id: 'retry-cancel',
+      status: 'failed',
+      notificationId: 19,
+      errorCode: 'notification_cancel_failed',
+    }))
+    const notifications = adapter()
+    const retried = await retryReadingReminder('retry-cancel', notifications)
+    expect(notifications.cancel).toHaveBeenCalledWith(19)
+    expect(notifications.schedule).not.toHaveBeenCalled()
+    expect(retried?.status).toBe('cancelled')
+  })
+
+  it('edits a future reminder by cancelling the old schedule before replacing it', async () => {
+    repository.reminders.set('edit-me', reminder({ id: 'edit-me', notificationId: 27 }))
+    const notifications = adapter()
+    const dueAtUtc = Date.now() + 120_000
+    const edited = await editReadingReminderTime('edit-me', dueAtUtc, 'Asia/Shanghai', notifications)
+    expect(notifications.cancel).toHaveBeenCalledWith(27)
+    expect(notifications.schedule).toHaveBeenCalledWith(expect.objectContaining({ id: 27, dueAtUtc }))
+    expect(edited).toMatchObject({ dueAtUtc, status: 'scheduled', notificationId: 27 })
+  })
+
+  it('startup reconciliation cancels pending cancellations without requesting permission', async () => {
+    repository.reminders.set('startup-cancel', reminder({
+      id: 'startup-cancel',
+      status: 'cancel_pending',
+      notificationId: 31,
+    }))
+    const notifications = adapter({ ensurePermission: vi.fn(async () => false) })
+    const result = await reconcileReadingReminders(notifications)
+    expect(notifications.ensurePermission).toHaveBeenCalledWith(false)
+    expect(notifications.cancel).toHaveBeenCalledWith(31)
+    expect(repository.reminders.get('startup-cancel')?.status).toBe('cancelled')
+    expect(result.cancelled).toBe(1)
+  })
+
+  it('startup reconciliation recognizes an existing native registration', async () => {
+    repository.reminders.set('native-existing', reminder({
+      id: 'native-existing',
+      status: 'pending',
+      notificationId: 37,
+    }))
+    const notifications = adapter({ pendingIds: vi.fn(async () => new Set([37])) })
+    await reconcileReadingReminders(notifications)
+    expect(notifications.schedule).not.toHaveBeenCalled()
+    expect(repository.reminders.get('native-existing')?.status).toBe('scheduled')
   })
 })
