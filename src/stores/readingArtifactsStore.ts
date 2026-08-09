@@ -44,7 +44,7 @@ export interface SaveFromMessageInput {
   sources?: ChatMessageSource[]
   contextScope?: ReadingScope
   messageId?: string
-  /** 类型专属结构化字段（批注/卡片等），经运行时解码后写入 structured_content */
+  /** 类型专属结构化字段，经运行时解码后写入 structured_content */
   structuredContent?: unknown | null
 }
 

@@ -875,7 +875,7 @@ export function registerBuiltinTools() {
     name: 'propose_save_reading_artifact',
     description: '提出保存阅读成果的行动提案。只生成确认卡，不直接写入 SQLite。',
     parameters: [
-      { name: 'artifactType', type: 'string', description: '成果类型：summary | question_set | annotation | flashcard_set | note', required: true },
+      { name: 'artifactType', type: 'string', description: '成果类型：summary | question_set | annotation | note', required: true },
       { name: 'title', type: 'string', description: '成果标题', required: true },
       { name: 'content', type: 'string', description: '要保存的成果正文', required: true },
       { name: 'sourceMessageId', type: 'string', description: '可选的来源助手消息 ID；确认时会重新校验', required: false },

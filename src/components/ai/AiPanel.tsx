@@ -19,7 +19,6 @@ import type {
   ChatMessageContextMeta,
   ChatMessageSource,
   LocalChatMessageSource,
-  ReadingScope,
   ActionProposal,
 } from '@/services/ai/types'
 import { AI_SHORTCUT_SUBMIT_EVENT } from '@/services/aiContext'
@@ -31,10 +30,7 @@ import {
   type ReadingArtifactType,
   type SourceAnchorStatus,
   type AnnotationStructuredContent,
-  type FlashcardStructuredContent,
   getAnnotationStructuredContent,
-  getFlashcardStructuredContent,
-  parseFlashcardCandidates,
   resolveAnnotationPosition,
 } from '@/services/database/readingArtifacts'
 import { loadReadingReminders, type ReadingReminder } from '@/services/database/readingReminders'
@@ -362,35 +358,6 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     const trimmed = content.trim()
     if (!trimmed) return
 
-    // 知识卡片：先解析候选；解析失败保留原回答并提示，不保存残缺卡片
-    if (type === 'flashcard_set') {
-      const cards = parseFlashcardCandidates(trimmed)
-      if (!cards || cards.length === 0) {
-        toast.error('未识别到合法知识卡片，请让 AI 用问答格式或 ```flashcard 卡片块输出')
-        return
-      }
-      const title = cards[0].front.length > 40 ? `${cards[0].front.slice(0, 40)}…` : cards[0].front
-      try {
-        const saved = await saveArtifactFromMessage({
-          type,
-          title,
-          content: trimmed,
-          sources,
-          contextScope: contextMeta?.readingScope,
-          messageId,
-          structuredContent: { cards },
-        })
-        if (saved) {
-          toast.success(`已保存 ${cards.length} 张知识卡片`)
-        } else {
-          toast.error('保存知识卡片失败')
-        }
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : '保存知识卡片失败')
-      }
-      return
-    }
-
     // 批注：必须有本地来源锚点；批注正文为 AI 回答，引用快照取来源标题或行号
     if (type === 'annotation') {
       const localSource = sources?.find((s): s is LocalChatMessageSource => s.kind !== 'web')
@@ -603,7 +570,6 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                   content={msg.displayContent ?? msg.content}
                   isLast={i === visibleMessages.length - 1}
                   streaming={streaming}
-                  contextMeta={msg.contextMeta}
                   sources={msg.sources}
                   onOpenSource={handleOpenRagSource}
                   onSaveAsMarkdown={
@@ -767,7 +733,6 @@ const ARTIFACT_FILTER_OPTIONS: Array<{ value: ReadingArtifactFilter; label: stri
   { value: 'summary', label: '摘要' },
   { value: 'question_set', label: '问题集' },
   { value: 'annotation', label: '批注' },
-  { value: 'flashcard_set', label: '卡片' },
   { value: 'note', label: '笔记' },
 ]
 
@@ -866,9 +831,6 @@ function ReadingArtifactCard({
   const annotation = artifact.type === 'annotation'
     ? getAnnotationStructuredContent(artifact)
     : null
-  const flashcards = artifact.type === 'flashcard_set'
-    ? getFlashcardStructuredContent(artifact)
-    : null
 
   const sourceLabel = artifact.source?.fileName
     ? [
@@ -912,9 +874,6 @@ function ReadingArtifactCard({
           {ARTIFACT_TYPE_LABELS[artifact.type]}
         </span>
         <span className="font-bold text-gm-text text-caption truncate">{artifact.title}</span>
-        {flashcards && (
-          <span className="ml-auto flex-shrink-0 text-micro text-gm-text-tertiary">{flashcards.cards.length} 张</span>
-        )}
       </button>
 
       {sourceLabel && (
@@ -938,14 +897,12 @@ function ReadingArtifactCard({
 
       {expanded && (
         <div className="mt-2 ml-5 rounded-lg bg-gm-canvas border border-gm-border p-2 max-h-[280px] overflow-auto">
-          {flashcards ? (
-            <FlashcardList cards={flashcards.cards} />
-          ) : annotation ? (
+          {annotation ? (
             <AnnotationDetail annotation={annotation} fallbackContent={artifact.content} />
           ) : (
             <AssistantMarkdown content={artifact.content} />
           )}
-          {artifact.source?.quote && !annotation && !flashcards && (
+          {artifact.source?.quote && !annotation && (
             <div className="mt-2 pl-3 border-l-2 border-gm-border text-micro text-gm-text-tertiary italic">
               「{artifact.source.quote}」
             </div>
@@ -980,51 +937,6 @@ function ReadingArtifactCard({
           {new Date(artifact.createdAt).toLocaleDateString('zh-CN')}
         </span>
       </div>
-    </div>
-  )
-}
-
-function FlashcardList({ cards }: { cards: FlashcardStructuredContent['cards'] }) {
-  const [revealedIndex, setRevealedIndex] = useState<number | null>(null)
-  return (
-    <div className="space-y-1.5">
-      {cards.map((card, index) => {
-        const revealed = revealedIndex === index
-        return (
-          <div key={index} className="rounded-lg border border-gm-border bg-gm-surface p-2">
-            <div className="flex items-start gap-1.5">
-              <span className="flex-shrink-0 rounded-full bg-gm-primary/10 text-gm-primary text-[10px] font-bold px-1.5 py-0.5">
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-caption text-gm-text font-bold break-words">{card.front}</div>
-                {revealed ? (
-                  <div className="mt-1 text-caption text-gm-text-secondary break-words border-t border-gm-border-subtle pt-1">
-                    {card.back}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setRevealedIndex(index)}
-                    className="mt-1 text-micro text-gm-primary hover:underline"
-                  >
-                    显示答案
-                  </button>
-                )}
-                {card.tags && card.tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {card.tags.map((tag) => (
-                      <span key={tag} className="rounded-full bg-gm-surface-elevated border border-gm-border px-1.5 py-0.5 text-[10px] text-gm-text-tertiary">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })}
     </div>
   )
 }
@@ -1114,7 +1026,6 @@ export const ChatBubble = memo(function ChatBubble({
   content,
   isLast,
   streaming,
-  contextMeta,
   sources,
   onOpenSource,
   onSaveAsMarkdown,
@@ -1124,7 +1035,6 @@ export const ChatBubble = memo(function ChatBubble({
   content: string
   isLast: boolean
   streaming: boolean
-  contextMeta?: ChatMessageContextMeta
   sources?: ChatMessageSource[]
   onOpenSource?: (source: LocalChatMessageSource) => void
   onSaveAsMarkdown?: () => void
@@ -1134,6 +1044,8 @@ export const ChatBubble = memo(function ChatBubble({
   const isEmpty = !content && isLast && streaming
   const isAssistantStreaming = !isUser && isLast && streaming
   const bubbleRef = useRef<HTMLDivElement>(null)
+  const saveMenuRef = useRef<HTMLDivElement>(null)
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false)
   // 批注需绑定本地来源范围；仅当存在非 web 来源时显示「批注」按钮
   const hasLocalSource = Boolean(sources?.some((s) => s.kind !== 'web'))
 
@@ -1150,79 +1062,104 @@ export const ChatBubble = memo(function ChatBubble({
     }
   }, [])
 
+  useEffect(() => {
+    if (!saveMenuOpen) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!saveMenuRef.current?.contains(event.target as Node)) setSaveMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSaveMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [saveMenuOpen])
+
+  const runSaveAction = (action: () => void) => {
+    setSaveMenuOpen(false)
+    action()
+  }
+
+  const canSave = !isUser && !isEmpty && Boolean(content.trim()) && Boolean(onSaveAsMarkdown || onSaveAsArtifact)
+
   return (
     <div className={`flex min-w-0 ${isUser ? 'justify-end' : 'justify-start'} animate-slideInUp`}>
       {!isUser && (
         <AiAvatar size="message" streaming={isAssistantStreaming} bounce={isEmpty} />
       )}
-      <div
-        ref={bubbleRef}
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        className={`select-text max-w-[80%] min-w-0 rounded-2xl px-4 py-2.5 text-body focus:outline-none ${
-          isUser
-            ? 'rounded-br-md'
-            : 'bg-gm-surface-elevated text-gm-text border border-gm-border rounded-bl-md'
-        } ${isAssistantStreaming ? 'gm-streaming-bubble' : ''}`}
-        style={isUser ? { backgroundColor: 'var(--gm-user-bubble-bg)', color: 'var(--gm-user-bubble-text)' } : undefined}
-      >
-        {!isUser && contextMeta?.readingScope && (
-          <ReadingScopeBadge scope={contextMeta.readingScope} coverage={contextMeta.sourceCoverage} />
-        )}
-        {isEmpty ? (
-          <div className="gm-typing-loader" aria-label="正在生成">
-            <span style={{ animationDelay: '0ms' }} />
-            <span style={{ animationDelay: '140ms' }} />
-            <span style={{ animationDelay: '280ms' }} />
-          </div>
-        ) : isUser || (isLast && streaming) ? (
-          <div className={`whitespace-pre-wrap overflow-wrap-anywhere ${isAssistantStreaming ? 'gm-streaming-text' : ''}`} style={{ wordBreak: 'normal' }}>
-            <span>{content}</span>
-            {isAssistantStreaming && <span className="gm-streaming-caret" aria-hidden="true" />}
-          </div>
-        ) : (
-          <AssistantMarkdown content={content} />
-        )}
-        {!isUser && sources && sources.length > 0 && onOpenSource && (
-          <MessageSources sources={sources} onOpenSource={onOpenSource} />
-        )}
-        {!isUser && !isEmpty && content.trim() && (onSaveAsMarkdown || onSaveAsArtifact) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {onSaveAsMarkdown && (
-              <Button
-                type="default"
-                size="small"
-                onClick={onSaveAsMarkdown}
-                title="保存为 Markdown"
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="mr-1"
-                >
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <path d="M7 10l5 5 5-5" />
-                  <path d="M12 15V3" />
-                </svg>
-                Markdown
-              </Button>
-            )}
-            {onSaveAsArtifact && (
-              <>
-                <Button type="text" size="small" onClick={() => onSaveAsArtifact('summary')} title="保存为摘要">摘要</Button>
-                <Button type="text" size="small" onClick={() => onSaveAsArtifact('question_set')} title="保存为问题集">问题集</Button>
-                {hasLocalSource && (
-                  <Button type="text" size="small" onClick={() => onSaveAsArtifact('annotation')} title="保存为批注（绑定来源范围，不修改原文）">批注</Button>
+      <div className="group relative min-w-0 w-fit max-w-[80%]">
+        <div
+          ref={bubbleRef}
+          tabIndex={-1}
+          onKeyDown={handleKeyDown}
+          className={`select-text max-w-full min-w-0 rounded-2xl px-4 py-2.5 text-body focus:outline-none ${
+            isUser
+              ? 'rounded-br-md'
+              : 'bg-gm-surface-elevated text-gm-text border border-gm-border rounded-bl-md'
+          } ${isAssistantStreaming ? 'gm-streaming-bubble' : ''}`}
+          style={isUser ? { backgroundColor: 'var(--gm-user-bubble-bg)', color: 'var(--gm-user-bubble-text)' } : undefined}
+        >
+          {isEmpty ? (
+            <div className="gm-typing-loader" aria-label="正在生成">
+              <span style={{ animationDelay: '0ms' }} />
+              <span style={{ animationDelay: '140ms' }} />
+              <span style={{ animationDelay: '280ms' }} />
+            </div>
+          ) : isUser || (isLast && streaming) ? (
+            <div className={`whitespace-pre-wrap overflow-wrap-anywhere ${isAssistantStreaming ? 'gm-streaming-text' : ''}`} style={{ wordBreak: 'normal' }}>
+              <span>{content}</span>
+              {isAssistantStreaming && <span className="gm-streaming-caret" aria-hidden="true" />}
+            </div>
+          ) : (
+            <AssistantMarkdown content={content} />
+          )}
+          {!isUser && sources && sources.length > 0 && onOpenSource && (
+            <MessageSources sources={sources} onOpenSource={onOpenSource} />
+          )}
+        </div>
+        {canSave && (
+          <div
+            ref={saveMenuRef}
+            className={`absolute bottom-0 left-full z-20 pl-1 transition-opacity ${
+              saveMenuOpen
+                ? 'pointer-events-auto opacity-100'
+                : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'
+            }`}
+          >
+            <Button
+              type="default"
+              size="small"
+              onClick={() => setSaveMenuOpen((open) => !open)}
+              title="保存回复"
+              aria-label="保存回复"
+              aria-expanded={saveMenuOpen}
+              className="!h-6 !w-6 !min-w-0 !rounded-full !p-0"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <path d="M7 10l5 5 5-5" />
+                <path d="M12 15V3" />
+              </svg>
+            </Button>
+            {saveMenuOpen && (
+              <div className="absolute bottom-full right-0 mb-1 min-w-32 rounded-lg border border-gm-border bg-gm-surface-elevated p-1 shadow-lg">
+                {onSaveAsMarkdown && (
+                  <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(onSaveAsMarkdown)}>Markdown</Button>
                 )}
-                <Button type="text" size="small" onClick={() => onSaveAsArtifact('flashcard_set')} title="保存为知识卡片">卡片</Button>
-                <Button type="text" size="small" onClick={() => onSaveAsArtifact('note')} title="保存为阅读笔记">笔记</Button>
-              </>
+                {onSaveAsArtifact && (
+                  <>
+                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('summary'))}>摘要</Button>
+                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('question_set'))}>问题集</Button>
+                    {hasLocalSource && (
+                      <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('annotation'))}>批注</Button>
+                    )}
+                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('note'))}>阅读笔记</Button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -1231,18 +1168,10 @@ export const ChatBubble = memo(function ChatBubble({
   )
 })
 
-const READING_SCOPE_LABELS: Record<ReadingScope, string> = {
-  selection: '选区',
-  section: '章节',
-  document: '全文',
-  workspace: '工作区',
-}
-
 const ARTIFACT_TYPE_LABELS: Record<ReadingArtifactType, string> = {
   summary: '摘要',
   question_set: '问题集',
   annotation: '批注',
-  flashcard_set: '知识卡片',
   note: '阅读笔记',
 }
 
@@ -1253,30 +1182,6 @@ function deriveArtifactTitle(type: ReadingArtifactType, content: string): string
     .map((line) => line.replace(/^#+\s*/, '').trim())
     .find((line) => line.length > 0) || ARTIFACT_TYPE_LABELS[type]
   return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine
-}
-
-function ReadingScopeBadge({
-  scope,
-  coverage,
-}: {
-  scope: ReadingScope
-  coverage?: ChatMessageContextMeta['sourceCoverage']
-}) {
-  const coverageHint = coverage === 'document_partial'
-    ? '已截断'
-    : coverage === 'workspace_topk'
-      ? 'TopK 片段'
-      : coverage === 'none'
-        ? '无来源'
-        : undefined
-  return (
-    <div className="mb-1.5 flex items-center gap-1.5 text-micro text-gm-text-tertiary">
-      <span className="inline-flex rounded-full border border-gm-border bg-gm-surface px-2 py-0.5 font-bold">
-        {READING_SCOPE_LABELS[scope]}
-      </span>
-      {coverageHint && <span>{coverageHint}</span>}
-    </div>
-  )
 }
 
 function AiAvatar({

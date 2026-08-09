@@ -16,7 +16,6 @@ export type ReadingArtifactType =
   | 'summary'
   | 'question_set'
   | 'annotation'
-  | 'flashcard_set'
   | 'note'
 
 export type ReadingArtifactStatus = 'active' | 'archived'
@@ -46,7 +45,7 @@ export interface ReadingArtifact {
   title: string
   /** Markdown 正文 */
   content: string
-  /** 结构化字段（question_set / flashcard_set 等），经运行时解码 */
+  /** 结构化字段，经运行时解码 */
   structuredContent?: unknown | null
   source?: ReadingArtifactSourceAnchor | null
   status: ReadingArtifactStatus
@@ -79,7 +78,6 @@ const ALLOWED_TYPES: readonly ReadingArtifactType[] = [
   'summary',
   'question_set',
   'annotation',
-  'flashcard_set',
   'note',
 ]
 
@@ -411,33 +409,9 @@ export interface AnnotationStructuredContent {
   endOffset?: number | null
 }
 
-/** 单张知识卡片候选：正面、背面、可选标签 */
-export interface FlashcardCandidate {
-  front: string
-  back: string
-  tags?: string[]
-}
-
-/**
- * 知识卡片结构化内容。
- *
- * 首期只支持生成预览、用户确认保存、查看和删除；不引入评分或间隔重复算法。
- */
-export interface FlashcardStructuredContent {
-  cards: FlashcardCandidate[]
-}
-
 function assertNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`批注/卡片字段 ${field} 缺失或非非空字符串`)
-  }
-  return value
-}
-
-function decodeStringArray(value: unknown, field: string): string[] | undefined {
-  if (value === undefined || value === null) return undefined
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    throw new Error(`${field} 必须为字符串数组`)
+    throw new Error(`批注字段 ${field} 缺失或不是非空字符串`)
   }
   return value
 }
@@ -465,30 +439,6 @@ export function decodeAnnotationStructuredContent(value: unknown): AnnotationStr
   return { quote, note, contextFingerprint, startOffset, endOffset }
 }
 
-/**
- * 运行时解码知识卡片 structured_content。
- * 至少包含一张合法卡片；空卡片集或字段缺失抛出可见错误。
- */
-export function decodeFlashcardStructuredContent(value: unknown): FlashcardStructuredContent {
-  if (!isPlainObject(value)) {
-    throw new Error('知识卡片 structured_content 必须为对象')
-  }
-  if (!Array.isArray(value.cards) || value.cards.length === 0) {
-    throw new Error('知识卡片 cards 必须为非空数组')
-  }
-  const cards: FlashcardCandidate[] = value.cards.map((item, index) => {
-    if (!isPlainObject(item)) {
-      throw new Error(`知识卡片第 ${index + 1} 条必须为对象`)
-    }
-    return {
-      front: assertNonEmptyString(item.front, `cards[${index}].front`),
-      back: assertNonEmptyString(item.back, `cards[${index}].back`),
-      tags: decodeStringArray(item.tags, `cards[${index}].tags`),
-    }
-  })
-  return { cards }
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -502,20 +452,6 @@ export function getAnnotationStructuredContent(
   if (artifact.type !== 'annotation') return null
   try {
     return decodeAnnotationStructuredContent(artifact.structuredContent)
-  } catch {
-    return null
-  }
-}
-
-/**
- * 取知识卡片结构化内容；类型不符或数据损坏返回 null（用于 UI 安全降级）。
- */
-export function getFlashcardStructuredContent(
-  artifact: ReadingArtifact,
-): FlashcardStructuredContent | null {
-  if (artifact.type !== 'flashcard_set') return null
-  try {
-    return decodeFlashcardStructuredContent(artifact.structuredContent)
   } catch {
     return null
   }
@@ -678,110 +614,4 @@ export function computeAnnotationFingerprint(
   const blocks = parseMarkdownBlocks(content)
   const block = findMarkdownBlockByOffset(blocks, startOffset)
   return block ? computeMarkdownBlockFingerprint(block.rawSource) : null
-}
-
-// --- 知识卡片候选解析（确定性解析 AI 回答，不调用模型）---
-
-const FLASHCARD_FENCE_LANGS = new Set(['flashcard', 'flashcards', 'cards', 'card'])
-
-/**
- * 从 AI 回答中解析知识卡片候选。
- *
- * 支持两种格式：
- * 1. 围栏代码块 ```flashcard / ```cards 包裹的 JSON 数组或 {cards:[...]} 对象。
- * 2. Markdown 问答列表：以 `Q:`/`问题:` 开头为正面，紧随的 `A:`/`答案:` 为背面。
- *
- * 解析失败或未命中合法卡片时返回 null；调用方应保留原回答并提示，不保存残缺卡片。
- * 本函数为纯函数，不调用模型，不产生副作用。
- */
-export function parseFlashcardCandidates(answer: string): FlashcardCandidate[] | null {
-  if (!answer || !answer.trim()) return null
-
-  const fenced = extractFlashcardFence(answer)
-  if (fenced) {
-    const parsed = tryParseFencedJson(fenced)
-    if (parsed) return normalizeCardList(parsed)
-  }
-
-  const fromQa = parseQaList(answer)
-  if (fromQa.length > 0) return fromQa
-
-  return null
-}
-
-function extractFlashcardFence(answer: string): string | null {
-  const fenceRegex = /```([a-zA-Z]+)\s*\n([\s\S]*?)```/g
-  let match: RegExpExecArray | null
-  while ((match = fenceRegex.exec(answer)) !== null) {
-    const lang = match[1].toLowerCase()
-    if (FLASHCARD_FENCE_LANGS.has(lang)) {
-      return match[2]
-    }
-  }
-  return null
-}
-
-function tryParseFencedJson(raw: string): unknown | null {
-  const trimmed = raw.trim()
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (Array.isArray(parsed) || isPlainObject(parsed)) return parsed
-  } catch {
-    // 不是合法 JSON，忽略
-  }
-  return null
-}
-
-function normalizeCardList(parsed: unknown): FlashcardCandidate[] | null {
-  let list: unknown[]
-  if (Array.isArray(parsed)) {
-    list = parsed
-  } else if (isPlainObject(parsed) && Array.isArray(parsed.cards)) {
-    list = parsed.cards
-  } else {
-    return null
-  }
-  const cards: FlashcardCandidate[] = []
-  for (const item of list) {
-    if (!isPlainObject(item)) continue
-    const front = typeof item.front === 'string' ? item.front.trim() : ''
-    const back = typeof item.back === 'string' ? item.back.trim() : ''
-    if (!front || !back) continue
-    const tags = decodeStringArray(item.tags, 'tags')
-    cards.push({ front, back, tags })
-  }
-  return cards.length > 0 ? cards : null
-}
-
-const QA_FRONT_RE = /^(?:Q[:：]|问题[:：]|问[:：])\s*(.+)$/u
-const QA_BACK_RE = /^(?:A[:：]|答[:：]|答案[:：])\s*(.+)$/u
-
-function parseQaList(answer: string): FlashcardCandidate[] {
-  const lines = answer.split('\n')
-  const cards: FlashcardCandidate[] = []
-  let currentFront: string | null = null
-  const flush = (front: string, back: string) => {
-    const f = front.trim()
-    const b = back.trim()
-    if (f && b) cards.push({ front: f, back: b })
-  }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    const frontMatch = QA_FRONT_RE.exec(line)
-    if (frontMatch) {
-      if (currentFront !== null) {
-        // 上一张卡片缺少背面，丢弃残缺卡片，不保存
-        currentFront = null
-      }
-      currentFront = frontMatch[1].trim()
-      continue
-    }
-    const backMatch = QA_BACK_RE.exec(line)
-    if (backMatch && currentFront !== null) {
-      flush(currentFront, backMatch[1].trim())
-      currentFront = null
-    }
-  }
-  return cards
 }

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '../src/services/agent/session'
 import { buildPendingActionResult, decodePendingAction } from '../src/services/agent/actionProposal'
 import { decodeRagIndexState, decodeRagSearchResults } from '../src/services/rag/nativeIndex'
-import { decodeReadingArtifact, decodeAnnotationStructuredContent, decodeFlashcardStructuredContent } from '../src/services/database/readingArtifacts'
+import { decodeReadingArtifact, decodeAnnotationStructuredContent } from '../src/services/database/readingArtifacts'
 
 assert.deepEqual(decodeRagIndexState({
   status: 'ready',
@@ -150,18 +150,6 @@ assert.throws(
   () => decodeAnnotationStructuredContent({ note: '缺 quote' }),
   /quote/,
   '批注缺 quote 必须抛出可见错误',
-)
-
-// 知识卡片结构化解码：至少一张合法卡片，空卡片集抛出可见错误
-const decodedFlashcards = decodeFlashcardStructuredContent({
-  cards: [{ front: '正面', back: '背面', tags: ['标签'] }],
-})
-assert.equal(decodedFlashcards.cards.length, 1)
-assert.equal(decodedFlashcards.cards[0].front, '正面')
-assert.throws(
-  () => decodeFlashcardStructuredContent({ cards: [] }),
-  /非空数组/,
-  '空卡片集必须抛出可见错误，不保存残缺卡片',
 )
 
 console.log('Runtime schema checks passed: RAG state, TopK hits, Agent progress events, and reading artifacts')

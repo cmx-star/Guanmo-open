@@ -3,12 +3,9 @@ import {
   decodeReadingArtifact,
   checkReadingArtifactSource,
   decodeAnnotationStructuredContent,
-  decodeFlashcardStructuredContent,
   getAnnotationStructuredContent,
-  getFlashcardStructuredContent,
   resolveAnnotationPosition,
   computeAnnotationFingerprint,
-  parseFlashcardCandidates,
   findMarkdownBlockByOffset,
   findMarkdownBlockByQuote,
   type ReadingArtifactRow,
@@ -104,10 +101,14 @@ describe('decodeReadingArtifact', () => {
   })
 
   it('所有合法类型均可解码', () => {
-    for (const type of ['summary', 'question_set', 'annotation', 'flashcard_set', 'note'] as const) {
+    for (const type of ['summary', 'question_set', 'annotation', 'note'] as const) {
       const artifact = decodeReadingArtifact(baseRow({ type }))
       expect(artifact.type).toBe(type)
     }
+  })
+
+  it('拒绝已移除的 flashcard_set 类型', () => {
+    expect(() => decodeReadingArtifact(baseRow({ type: 'flashcard_set' }))).toThrow(/未知的 reading_artifacts 类型/)
   })
 })
 
@@ -219,57 +220,6 @@ describe('decodeAnnotationStructuredContent', () => {
   it('非批注类型 getAnnotationStructuredContent 返回 null', () => {
     const artifact = decodeReadingArtifact(baseRow({ type: 'summary' }))
     expect(getAnnotationStructuredContent(artifact)).toBeNull()
-  })
-})
-
-describe('decodeFlashcardStructuredContent', () => {
-  it('解码合法卡片集', () => {
-    const decoded = decodeFlashcardStructuredContent({
-      cards: [
-        { front: '正面1', back: '背面1', tags: ['标签'] },
-        { front: '正面2', back: '背面2' },
-      ],
-    })
-    expect(decoded.cards).toHaveLength(2)
-    expect(decoded.cards[0].front).toBe('正面1')
-    expect(decoded.cards[0].tags).toEqual(['标签'])
-    expect(decoded.cards[1].tags).toBeUndefined()
-  })
-
-  it('空卡片数组抛出可见错误，不保存残缺卡片', () => {
-    expect(() => decodeFlashcardStructuredContent({ cards: [] })).toThrow(/非空数组/)
-  })
-
-  it('cards 缺失抛出可见错误', () => {
-    expect(() => decodeFlashcardStructuredContent({})).toThrow(/非空数组/)
-  })
-
-  it('卡片 front 缺失抛出可见错误', () => {
-    expect(() => decodeFlashcardStructuredContent({ cards: [{ back: '背面' }] })).toThrow(/front/)
-  })
-
-  it('tags 非字符串数组抛出可见错误', () => {
-    expect(() => decodeFlashcardStructuredContent({
-      cards: [{ front: '正', back: '背', tags: [1] }],
-    })).toThrow(/tags/)
-  })
-
-  it('flashcard_set 行经 decodeReadingArtifact 后可由 getFlashcardStructuredContent 取出', () => {
-    const artifact = decodeReadingArtifact(baseRow({
-      type: 'flashcard_set',
-      structured_content: '{"cards":[{"front":"Q","back":"A"}]}',
-    }))
-    const cards = getFlashcardStructuredContent(artifact)
-    expect(cards?.cards).toHaveLength(1)
-    expect(cards?.cards[0].front).toBe('Q')
-  })
-
-  it('损坏的 flashcard structured_content 经 getFlashcardStructuredContent 安全降级为 null', () => {
-    const artifact = decodeReadingArtifact(baseRow({
-      type: 'flashcard_set',
-      structured_content: '{"cards":[]}',
-    }))
-    expect(getFlashcardStructuredContent(artifact)).toBeNull()
   })
 })
 
@@ -388,72 +338,5 @@ describe('resolveAnnotationPosition', () => {
     const before = content
     resolveAnnotationPosition(content, annotation, null)
     expect(content).toBe(before)
-  })
-})
-
-describe('parseFlashcardCandidates', () => {
-  it('解析 ```flashcard JSON 数组围栏块', () => {
-    const answer = '一些说明\n```flashcard\n[{"front":"问题1","back":"答案1"},{"front":"问题2","back":"答案2","tags":["t"]}]\n```\n后续'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).not.toBeNull()
-    expect(cards).toHaveLength(2)
-    expect(cards?.[0].front).toBe('问题1')
-    expect(cards?.[1].tags).toEqual(['t'])
-  })
-
-  it('解析 ```cards 对象 {cards:[...]} 围栏块', () => {
-    const answer = '```cards\n{"cards":[{"front":"Q","back":"A"}]}\n```'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(1)
-    expect(cards?.[0].back).toBe('A')
-  })
-
-  it('解析 Q:/A: 问答列表格式', () => {
-    const answer = '复习卡片：\nQ: 第一个问题\nA: 第一个答案\nQ: 第二个问题\nA: 第二个答案\n'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(2)
-    expect(cards?.[1].front).toBe('第二个问题')
-  })
-
-  it('支持中文 问题:/答案: 前缀', () => {
-    const answer = '问题: 中文正面\n答案: 中文背面'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(1)
-    expect(cards?.[0].front).toBe('中文正面')
-    expect(cards?.[0].back).toBe('中文背面')
-  })
-
-  it('缺少背面的残缺卡片被丢弃，不保存', () => {
-    const answer = 'Q: 只有正面没有背面\nQ: 完整问题\nA: 完整答案'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(1)
-    expect(cards?.[0].front).toBe('完整问题')
-  })
-
-  it('围栏块内 front/back 为空的卡片被过滤', () => {
-    const answer = '```flashcard\n[{"front":"","back":""},{"front":"有效","back":"答案"}]\n```'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(1)
-    expect(cards?.[0].front).toBe('有效')
-  })
-
-  it('无法识别的回答返回 null，调用方保留原回答', () => {
-    expect(parseFlashcardCandidates('这是一段普通解释，没有卡片')).toBeNull()
-    expect(parseFlashcardCandidates('')).toBeNull()
-    expect(parseFlashcardCandidates('   ')).toBeNull()
-  })
-
-  it('围栏块 JSON 损坏时回退到 Q/A 解析', () => {
-    const answer = '```flashcard\n{not valid json\n```\nQ: 备用问题\nA: 备用答案'
-    const cards = parseFlashcardCandidates(answer)
-    expect(cards).toHaveLength(1)
-    expect(cards?.[0].front).toBe('备用问题')
-  })
-
-  it('为纯函数，不调用模型、不产生副作用', () => {
-    const answer = 'Q: x\nA: y'
-    const result1 = parseFlashcardCandidates(answer)
-    const result2 = parseFlashcardCandidates(answer)
-    expect(result1).toEqual(result2)
   })
 })

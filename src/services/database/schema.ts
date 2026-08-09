@@ -124,10 +124,10 @@ CREATE TABLE IF NOT EXISTS legacy_idb_detection (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Structured reading artifacts (summaries, question sets, annotations, notes, flashcards)
+-- Structured reading artifacts.
 CREATE TABLE IF NOT EXISTS reading_artifacts (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('summary', 'question_set', 'annotation', 'flashcard_set', 'note')),
+  type TEXT NOT NULL CHECK (type IN ('summary', 'question_set', 'annotation', 'note')),
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   structured_content TEXT,

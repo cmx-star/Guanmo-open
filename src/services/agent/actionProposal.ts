@@ -2,7 +2,7 @@ import type { ActionProposal, ActionProposalKind, EditConfirmation } from '@/ser
 
 const ACTION_PROPOSAL_VERSION = 1 as const
 const ACTION_PROPOSAL_TTL_MS = 15 * 60 * 1000
-const ARTIFACT_TYPES = ['summary', 'question_set', 'annotation', 'flashcard_set', 'note'] as const
+const ARTIFACT_TYPES = ['summary', 'question_set', 'annotation', 'note'] as const
 const MEMORY_CATEGORIES = ['preference', 'project', 'learning', 'profile', 'instruction'] as const
 
 type PendingActionPayload = Omit<ActionProposal, 'id' | 'messageId' | 'status' | 'createdAt' | 'expiresAt' | 'updatedAt'>

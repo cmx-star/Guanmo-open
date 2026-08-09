@@ -66,6 +66,15 @@ describe('Agent 行动安全底座', () => {
     })
   })
 
+  it('拒绝知识卡片提案', () => {
+    expect(() => buildPendingActionResult(
+      'save_reading_artifact',
+      { artifactType: 'flashcard_set', title: '旧卡片', content: '旧内容' },
+      { title: '保存阅读成果', target: '本地阅读成果库', preview: '旧内容' },
+    )).toThrow(/成果类型无效/)
+
+  })
+
   it('拒绝未注册动作和文件提案中的任意路径字段', () => {
     expect(() => decodePendingAction({ __pendingAction: true, kind: 'run_shell' })).toThrow(/未注册/)
     expect(() => buildPendingActionResult(
