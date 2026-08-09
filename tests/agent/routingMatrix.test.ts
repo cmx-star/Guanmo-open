@@ -1245,6 +1245,21 @@ describe('buildCandidateTools 工具映射', () => {
     expect(reminderDecision.candidateTools).toContain('propose_create_reading_reminder')
   })
 
+  it('自然提醒表达稳定分配提醒提案与电脑时间工具', () => {
+    for (const query of [
+      '提醒我明天下午三点继续阅读',
+      '创建提醒，30 分钟后继续阅读',
+      '设置一个提醒，今晚九点复习本章',
+      '添加一条提醒，后天上午十点阅读',
+    ]) {
+      const decision = makeRoutingDecision(query, {})
+      expect(decision.mode, query).toBe('agent')
+      expect(decision.candidates, query).toContain('action')
+      expect(decision.candidateTools, query).toContain('get_current_time')
+      expect(decision.candidateTools, query).toContain('propose_create_reading_reminder')
+    }
+  })
+
   it('file_read 映射到 read_context_file', () => {
     expect(buildCandidateTools(['file_read'])).toEqual(['read_context_file'])
   })

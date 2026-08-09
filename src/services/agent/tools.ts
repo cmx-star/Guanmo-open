@@ -921,12 +921,12 @@ export function registerBuiltinTools() {
 
   registerTool({
     name: 'propose_create_reading_reminder',
-    description: '提出一次性本地阅读提醒。dueAt 必须是明确的 ISO 时间，timezone 必须显式提供；只生成确认卡，不直接注册通知。',
+    description: '提出一次性本地阅读提醒。dueAt 必须是明确的未来 ISO 时间；省略时区偏移和 timezone 时按电脑时区解释。只生成确认卡，不直接注册通知。',
     parameters: [
       { name: 'title', type: 'string', description: '提醒标题', required: true },
       { name: 'description', type: 'string', description: '提醒说明', required: false },
-      { name: 'dueAt', type: 'string', description: '包含时区偏移的明确 ISO 日期时间', required: true },
-      { name: 'timezone', type: 'string', description: '创建时区，例如 Asia/Shanghai', required: true },
+      { name: 'dueAt', type: 'string', description: '明确的未来 ISO 日期时间；无偏移时使用电脑时区', required: true },
+      { name: 'timezone', type: 'string', description: '可选创建时区，例如 Asia/Shanghai；默认电脑时区', required: false },
       { name: 'sourceMessageId', type: 'string', description: '可选的来源助手消息 ID；确认时会重新校验', required: false },
     ],
     effect: 'schedule',
@@ -937,11 +937,11 @@ export function registerBuiltinTools() {
       title: args.title,
       ...(args.description ? { description: args.description } : {}),
       dueAt: args.dueAt,
-      timezone: args.timezone,
+      ...(args.timezone ? { timezone: args.timezone } : {}),
       ...(args.sourceMessageId ? { sourceMessageId: args.sourceMessageId } : {}),
     }, {
       title: '创建一次性阅读提醒',
-      target: `${String(args.dueAt || '')} · ${String(args.timezone || '')}`,
+      target: String(args.dueAt || ''),
       preview: `${String(args.title || '')}${args.description ? `\n${String(args.description).slice(0, 800)}` : ''}`,
     }),
   })

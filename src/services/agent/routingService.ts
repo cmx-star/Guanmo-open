@@ -21,6 +21,7 @@ import {
   isFileSummaryIntent,
   isSectionReadingIntent,
   isDocumentRewriteIntent,
+  isReminderCreationIntent,
   type Capability,
   type AppContext,
 } from './intentDetector'
@@ -218,6 +219,13 @@ export function makeRoutingDecision(
   }
   if (explicitMemoryWriteIntent && !candidateTools.includes('save_memory')) {
     candidateTools.push('save_memory', 'list_memories')
+  }
+  if (
+    isReminderCreationIntent(content)
+    && candidateTools.includes('propose_create_reading_reminder')
+    && !candidateTools.includes('get_current_time')
+  ) {
+    candidateTools.unshift('get_current_time')
   }
   candidateTools = Array.from(new Set(candidateTools))
 

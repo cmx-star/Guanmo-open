@@ -93,14 +93,20 @@ function decodePayload(kind: ActionProposalKind, value: unknown): Record<string,
   }
   assertAllowedKeys(value, ['title', 'description', 'dueAt', 'timezone', 'sourceMessageId'])
   const dueAt = requiredString(value.dueAt, 'dueAt', 64)
-  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(dueAt)) {
-    throw new Error('行动提案提醒时间必须包含明确时区偏移')
+  const computerTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const explicitTimezone = optionalString(value.timezone, 'timezone', 100)
+  const timezone = explicitTimezone ?? computerTimezone
+  const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(dueAt)
+  if (!hasOffset && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/i.test(dueAt)) {
+    throw new Error('行动提案提醒时间必须是明确的 ISO 日期时间')
+  }
+  if (!hasOffset && explicitTimezone && explicitTimezone !== computerTimezone) {
+    throw new Error('非电脑时区的提醒时间必须包含明确时区偏移')
   }
   const dueTime = Date.parse(dueAt)
   if (!Number.isFinite(dueTime) || dueTime <= Date.now()) {
     throw new Error('行动提案提醒时间必须晚于当前时间')
   }
-  const timezone = requiredString(value.timezone, 'timezone', 100)
   try {
     new Intl.DateTimeFormat('zh-CN', { timeZone: timezone }).format(dueTime)
   } catch {

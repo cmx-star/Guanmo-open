@@ -70,7 +70,10 @@ const KEYWORD_CONFIG: Record<Capability, { weak: string[]; strong: string[] }> =
   },
   action: {
     weak: ['阅读成果', '阅读笔记', '提醒'],
-    strong: ['保存为阅读成果', '保存阅读成果', '新建 Markdown 阅读笔记', '创建阅读提醒', '设置阅读提醒'],
+    strong: [
+      '保存为阅读成果', '保存阅读成果', '新建 Markdown 阅读笔记',
+      '创建阅读提醒', '设置阅读提醒', '创建提醒', '设置提醒', '添加提醒', '提醒我',
+    ],
   },
   web: {
     weak: ['搜索', '查找', '网上', '联网', '最新', '新闻', '查一下', '搜一下'],
@@ -115,7 +118,7 @@ const REGEX_PATTERNS: Record<Capability, RegExp[]> = {
   action: [
     /(保存|存为|添加).*(阅读成果|摘要|问题集|批注)/i,
     /(新建|创建|保存).*(Markdown|markdown).*(阅读笔记|笔记)/i,
-    /(创建|设置|添加|提醒).*(阅读提醒|提醒我)/i,
+    /(?:创建|设置|添加)(?:一个|一条)?(?:阅读)?提醒|提醒我/i,
   ],
   web: [
     /^(搜索|查找|帮我搜|网上搜|联网搜)/,
@@ -133,6 +136,12 @@ const REGEX_PATTERNS: Record<Capability, RegExp[]> = {
     /(星期|周).*(几|几号)/,
     /(时间|日期|几点).*(现在|当前|今天)/,
   ],
+}
+
+const REMINDER_CREATION_PATTERN = /(?:创建|设置|添加)(?:一个|一条)?(?:阅读)?提醒|提醒我/i
+
+export function isReminderCreationIntent(query: string): boolean {
+  return REMINDER_CREATION_PATTERN.test(query.trim())
 }
 
 export type SelectionRequestKind = 'none' | 'fast' | 'context' | 'explicit_lookup'
@@ -228,6 +237,11 @@ function scoreCapability(
       score += 2
       signals.push(`regex:${pattern.source.slice(0, 30)}`)
     }
+  }
+
+  if (capability === 'action' && isReminderCreationIntent(query)) {
+    score = Math.max(score, 4)
+    signals.push('classifier:reminder_creation')
   }
 
   if (capability === 'knowledge' && isLocalResearchIntent(query)) {

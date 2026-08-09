@@ -66,6 +66,24 @@ describe('Agent 行动安全底座', () => {
     })
   })
 
+  it('提醒工具省略时区时按电脑时区归一化本地 ISO 时间', async () => {
+    const tool = getTool('propose_create_reading_reminder')!
+    expect(tool.parameters.find((parameter) => parameter.name === 'timezone')?.required).toBe(false)
+    const raw = await tool.execute({
+      title: '继续阅读',
+      dueAt: '2099-08-11T15:00:00',
+    })
+    const pending = decodePendingAction(JSON.parse(raw))
+    expect(pending).toMatchObject({
+      kind: 'create_reading_reminder',
+      payload: {
+        title: '继续阅读',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+    })
+    expect(String(pending?.payload.dueAt)).toMatch(/Z$/)
+  })
+
   it('拒绝知识卡片提案', () => {
     expect(() => buildPendingActionResult(
       'save_reading_artifact',
