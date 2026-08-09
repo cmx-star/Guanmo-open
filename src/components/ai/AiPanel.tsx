@@ -446,8 +446,8 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
           <Button
             type={panelView === 'artifacts' ? 'default' : 'text'}
             size="small"
-            onClick={() => setPanelView(panelView === 'artifacts' ? 'chat' : 'artifacts')}
-            title={panelView === 'artifacts' ? '返回对话' : '阅读成果'}
+            onClick={() => setPanelView('artifacts')}
+            title="阅读成果"
             icon={
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
@@ -458,8 +458,8 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
           <Button
             type={panelView === 'reminders' ? 'default' : 'text'}
             size="small"
-            onClick={() => setPanelView(panelView === 'reminders' ? 'chat' : 'reminders')}
-            title={panelView === 'reminders' ? '返回对话' : '阅读提醒'}
+            onClick={() => setPanelView('reminders')}
+            title="阅读提醒"
             icon={
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
@@ -467,7 +467,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
               </svg>
             }
           />
-          {panelView === 'chat' && messages.length > 0 && (
+          {panelView === 'chat' && messages.length > 0 ? (
             <Button
               type="text"
               size="small"
@@ -479,7 +479,19 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                 </svg>
               }
             />
-          )}
+          ) : panelView !== 'chat' ? (
+            <Button
+              type="text"
+              size="small"
+              onClick={() => setPanelView('chat')}
+              title="返回"
+              icon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+              }
+            />
+          ) : null}
           <Button
             type="text"
             size="small"
