@@ -22,11 +22,12 @@ import { useFileRename } from '@/hooks/useFileRename'
 interface SidebarProps {
   collapsed: boolean
   width: number
+  onResizeStart: (event: React.MouseEvent) => void
   onOpenSettings: () => void
   onOpenSearch: () => void
 }
 
-export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: SidebarProps) {
+export function Sidebar({ collapsed, width, onResizeStart, onOpenSettings, onOpenSearch }: SidebarProps) {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
   const addWorkspaceRoot = useAppStore((s) => s.addWorkspaceRoot)
   const recentFiles = useEditorStore((s) => s.recentFiles).filter((file) => isWorkspaceDisplayFile(file.path))
@@ -167,6 +168,10 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
       className="animal-cursor gm-instant-color relative flex-shrink-0 bg-gm-surface border-r border-gm-border flex flex-col overflow-hidden"
       style={{ width }}
     >
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-gm-primary/30 transition-colors"
+        onMouseDown={onResizeStart}
+      />
       {/* Header */}
       <div className="h-11 flex items-center px-4 border-b border-gm-border-subtle">
         <span className="text-body font-bold text-gm-text tracking-wide">
