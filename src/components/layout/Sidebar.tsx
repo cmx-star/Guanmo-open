@@ -1,24 +1,22 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { isTauri, readFile } from '@/hooks/useTauri'
-import { openFile } from '@/services/fileSystem'
-import { pickDirectory } from '@/services/fileSystem'
+import { openFile, pickDirectory } from '@/services/fileSystem'
 import { isWorkspaceDisplayFile } from '@/services/fileTree'
-import { indexMarkdownDocument, indexWorkspaceMarkdown, scheduleMarkdownDocumentIndex, isMarkdownPath } from '@/services/rag/indexer'
+import { scheduleMarkdownDocumentIndex, isMarkdownPath } from '@/services/rag/indexer'
 import { addKnowledgeDocument, isKnowledgeDocumentIndexed } from '@/services/rag/knowledgeBase'
 import { isSameFilePath } from '@/services/pathIdentity'
 import { toast } from '@/services/toast'
 import { Button, Collapse, Divider } from 'animal-island-ui'
-import { FileTree, RecentFiles } from '@/components/file-tree/FileTree'
+import { RecentFiles } from '@/components/file-tree/FileTree'
+import { WorkspaceRoots } from '@/components/file-tree/WorkspaceRoots'
 import { ContextMenu, ContextMenuGroupTitle, ContextMenuItem, ContextMenuSeparator } from '@/components/common/ContextMenu'
 import { addFileContextTag, summarizeFileWithAi } from '@/services/aiContext'
 import { saveExistingFileAs } from '@/services/fileEntryActions'
 import { describeFileOperationError } from '@/services/fileOperationErrors'
 import { readRememberedFile } from '@/services/persistedFileAccess'
-import { cleanupMissingWorkspaceDocuments, rebuildWorkspaceDocuments } from '@/services/workspaceIndex'
 import { TruncatedText } from '@/components/common/Tooltip'
-import { useWorkspaceFileTree } from '@/hooks/useWorkspaceFileTree'
 import { useFileRename } from '@/hooks/useFileRename'
 
 interface SidebarProps {
@@ -30,35 +28,10 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: SidebarProps) {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
-  const setWorkspacePath = useAppStore((s) => s.setWorkspacePath)
+  const addWorkspaceRoot = useAppStore((s) => s.addWorkspaceRoot)
   const recentFiles = useEditorStore((s) => s.recentFiles).filter((file) => isWorkspaceDisplayFile(file.path))
   const favorites = useEditorStore((s) => s.favorites).filter(isWorkspaceDisplayFile)
   const tabs = useEditorStore((s) => s.tabs)
-  const activeTabId = useEditorStore((s) => s.activeTabId)
-  const {
-    workspacePath,
-    workspaceFiles,
-    workspaceHiddenCount,
-    loadWorkspace,
-    refreshWorkspace,
-    closeWorkspace,
-  } = useWorkspaceFileTree()
-  const [indexingWorkspace, setIndexingWorkspace] = useState(false)
-  const [workspaceCleanupSummary, setWorkspaceCleanupSummary] = useState<string | null>(null)
-  const [indexMenuOpen, setIndexMenuOpen] = useState(false)
-  const indexMenuRef = useRef<HTMLDivElement>(null)
-
-  // 点击外部关闭索引下拉菜单
-  useEffect(() => {
-    if (!indexMenuOpen) return
-    const handler = (e: MouseEvent) => {
-      if (indexMenuRef.current && !indexMenuRef.current.contains(e.target as Node)) {
-        setIndexMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [indexMenuOpen])
 
   // Build favorites list with file names
   const favoriteFiles = favorites.map((path) => {
@@ -94,14 +67,14 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
     try {
       const dirPath = await pickDirectory()
       if (!dirPath) return
-      setWorkspacePath(dirPath)
-      setWorkspaceCleanupSummary(null)
-      await loadWorkspace(dirPath)
+      if (!addWorkspaceRoot(dirPath)) {
+        toast.error('该文件夹已在工作区中')
+      }
     } catch (err) {
       console.error('Open folder failed:', err)
       toast.error('打开文件夹失败')
     }
-  }, [setWorkspacePath, loadWorkspace])
+  }, [addWorkspaceRoot])
 
   const handleOpenFileFromTree = useCallback(async (path: string) => {
     try {
@@ -123,11 +96,9 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
       }
       console.error('Open file from tree failed:', err)
       toast.error(describeFileOperationError(err, '打开文件失败'))
-      if (workspacePath) {
-        await loadWorkspace(workspacePath)
-      }
+      window.dispatchEvent(new Event('guanmo:workspace-refresh'))
     }
-  }, [loadWorkspace, workspacePath])
+  }, [])
 
   const handleOpenRecentFile = useCallback(async (file: { name: string; path: string }) => {
     try {
@@ -150,63 +121,9 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
     }
   }, [])
 
-  const handleCloseWorkspace = useCallback(() => {
-    closeWorkspace()
-    setWorkspaceCleanupSummary(null)
-  }, [closeWorkspace])
-
-  const handleRefreshWorkspace = useCallback(async () => {
-    await refreshWorkspace()
-  }, [refreshWorkspace])
-
-  const handleIndexWorkspace = useCallback(async () => {
-    if (!workspacePath || indexingWorkspace) return
-    setIndexingWorkspace(true)
-    setWorkspaceCleanupSummary(null)
-    try {
-      const result = await indexWorkspaceMarkdown(workspacePath)
-      let summary = `已索引 ${result.indexed}`
-      if (result.failed > 0) summary += `，失败 ${result.failed}`
-      if (result.errors.length > 0) summary += `\n${result.errors.join('\n')}`
-      setWorkspaceCleanupSummary(summary)
-    } catch (err) {
-      setWorkspaceCleanupSummary(err instanceof Error ? err.message : '索引失败')
-    } finally {
-      setIndexingWorkspace(false)
-    }
-  }, [workspacePath, indexingWorkspace])
-
-  const handleCleanupWorkspace = useCallback(async () => {
-    if (!workspacePath || indexingWorkspace) return
-    setIndexingWorkspace(true)
-    setWorkspaceCleanupSummary(null)
-    try {
-      const result = await cleanupMissingWorkspaceDocuments(workspacePath)
-      setWorkspaceCleanupSummary(result.removed > 0 ? `已清理 ${result.removed} 个失效索引` : '未发现失效索引')
-      if (result.removed > 0) {
-        await loadWorkspace(workspacePath)
-      }
-    } catch (err) {
-      setWorkspaceCleanupSummary(err instanceof Error ? err.message : '清理失效索引失败')
-    } finally {
-      setIndexingWorkspace(false)
-    }
-  }, [indexingWorkspace, loadWorkspace, workspacePath])
-
-  const handleRebuildWorkspace = useCallback(async () => {
-    if (!workspacePath || indexingWorkspace) return
-    setIndexingWorkspace(true)
-    setWorkspaceCleanupSummary(null)
-    try {
-      const result = await rebuildWorkspaceDocuments(workspacePath)
-      setWorkspaceCleanupSummary(`已移除 ${result.removed} 个旧索引并重新索引 ${result.indexed} 个文件`)
-      await loadWorkspace(workspacePath)
-    } catch (err) {
-      setWorkspaceCleanupSummary(err instanceof Error ? err.message : '重建工作区索引失败')
-    } finally {
-      setIndexingWorkspace(false)
-    }
-  }, [indexingWorkspace, loadWorkspace, workspacePath])
+  const refreshWorkspaces = useCallback(() => {
+    window.dispatchEvent(new Event('guanmo:workspace-refresh'))
+  }, [])
 
   if (collapsed) {
     return (
@@ -281,7 +198,7 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
                 <p className="mt-1 text-gm-text-disabled">请下载桌面版体验完整功能</p>
               </div>
             ) : (
-              <RecentFiles files={recentFiles} onOpen={handleOpenRecentFile} onRefreshWorkspace={workspacePath ? () => loadWorkspace(workspacePath) : undefined} />
+              <RecentFiles files={recentFiles} onOpen={handleOpenRecentFile} onRefreshWorkspace={refreshWorkspaces} />
             )
           }
         />
@@ -294,7 +211,7 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
                 <p className="mt-1 text-gm-text-disabled">请下载桌面版体验完整功能</p>
               </div>
             ) : favoriteFiles.length > 0 ? (
-              <FavoriteFiles files={favoriteFiles} onRefreshWorkspace={workspacePath ? () => loadWorkspace(workspacePath) : undefined} />
+              <FavoriteFiles files={favoriteFiles} onRefreshWorkspace={refreshWorkspaces} />
             ) : (
               <div className="text-caption text-gm-text-tertiary text-center py-4">
                 暂无收藏
@@ -311,94 +228,8 @@ export function Sidebar({ collapsed, width, onOpenSettings, onOpenSearch }: Side
                 <p>浏览器模式下工作区不可用</p>
                 <p className="mt-1 text-gm-text-disabled">请下载桌面版体验完整功能</p>
               </div>
-            ) : workspacePath ? (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-micro text-gm-text-tertiary truncate flex-1" title={workspacePath}>
-                    {workspacePath.split(/[/\\]/).pop()}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      await handleRefreshWorkspace()
-                      toast.success('工作区已刷新')
-                    }}
-                    className="text-micro text-gm-text-tertiary hover:text-gm-text ml-2"
-                    title="重新读取工作区文件列表"
-                  >
-                    刷新
-                  </button>
-                  <button
-                    onClick={handleCloseWorkspace}
-                    className="text-micro text-gm-text-tertiary hover:text-gm-text ml-2"
-                  >
-                    关闭
-                  </button>
-                </div>
-                {/* 索引操作栏 */}
-                <div className="relative inline-flex items-center gap-0.5 mb-1" ref={indexMenuRef}>
-                  <Button
-                    type="text"
-                    size="small"
-                    loading={indexingWorkspace}
-                    onClick={handleIndexWorkspace}
-                  >
-                    索引 Markdown
-                  </Button>
-                  <button
-                    onClick={() => setIndexMenuOpen((v) => !v)}
-                    className="inline-flex items-center text-gm-text-tertiary hover:text-gm-text"
-                    title="更多索引操作"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                  {indexMenuOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[120px] rounded-lg border border-gm-border bg-gm-surface-elevated shadow-lg py-1">
-                      <button
-                        className="w-full px-3 py-1.5 text-left text-micro text-gm-text-secondary hover:bg-gm-surface-hover hover:text-gm-text"
-                        onClick={() => { setIndexMenuOpen(false); handleCleanupWorkspace() }}
-                      >
-                        清理失效索引
-                      </button>
-                      <button
-                        className="w-full px-3 py-1.5 text-left text-micro text-gm-text-secondary hover:bg-gm-surface-hover hover:text-gm-text"
-                        onClick={() => { setIndexMenuOpen(false); handleRebuildWorkspace() }}
-                      >
-                        重建索引
-                      </button>
-                    </div>
-                  )}
-                </div>
-                {/* 索引结果卡片 */}
-                {workspaceCleanupSummary && (
-                  <div className="mb-1 rounded-lg border border-gm-border bg-gm-surface-elevated px-2 py-1.5 text-micro text-gm-text-tertiary break-words whitespace-pre-line">
-                    {workspaceCleanupSummary}
-                  </div>
-                )}
-                {workspaceHiddenCount > 0 && (
-                  <div className="text-micro text-gm-text-disabled">
-                    已隐藏 {workspaceHiddenCount} 个非文本文件或大型目录
-                  </div>
-                )}
-                <FileTree
-                  nodes={workspaceFiles}
-                  onOpenFile={handleOpenFileFromTree}
-                  workspacePath={workspacePath}
-                  onRefreshWorkspace={handleRefreshWorkspace}
-                  onCloseWorkspace={handleCloseWorkspace}
-                />
-              </div>
             ) : (
-              <div className="text-caption text-gm-text-tertiary text-center py-4">
-                <button
-                  onClick={handleOpenFolder}
-                  className="text-gm-primary hover:underline text-caption"
-                >
-                  打开文件夹
-                </button>
-                <p className="mt-1 text-gm-text-disabled">Ctrl+O</p>
-              </div>
+              <WorkspaceRoots onOpenFile={(path) => { void handleOpenFileFromTree(path) }} />
             )
           }
         />

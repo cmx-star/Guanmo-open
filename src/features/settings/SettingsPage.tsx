@@ -42,7 +42,7 @@ import {
   type Memory,
 } from '@/services/database/persistence'
 import { toast } from '@/services/toast'
-import { useAppStore } from '@/stores/appStore'
+import { selectPrimaryWorkspacePath, useAppStore } from '@/stores/appStore'
 import { cleanupMissingWorkspaceDocuments, rebuildWorkspaceDocuments } from '@/services/workspaceIndex'
 import { exportDataBackup, importDataBackup } from '@/services/dataBackup'
 import { useChatStore } from '@/stores/chatStore'
@@ -972,7 +972,8 @@ function AuthorizedApiOrigins() {
 
 function KnowledgeStats({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => void }) {
   const { ai } = useSettingsStore()
-  const workspacePath = useAppStore((s) => s.workspacePath)
+  const workspaceRoots = useAppStore((state) => state.workspaceRoots)
+  const workspacePaths = workspaceRoots.map((root) => root.path)
   const [stats, setStats] = useState({ documents: 0, totalChunks: 0, embeddedChunks: 0, pendingEmbeddings: 0 })
   const [jobStats, setJobStats] = useState({ pending: 0, running: 0, done: 0, failed: 0 })
   const [stateSummary, setStateSummary] = useState({ PENDING: 0, CHUNKED: 0, EMBEDDING: 0, INDEXED: 0, FAILED: 0 })
@@ -1018,15 +1019,16 @@ function KnowledgeStats({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: ()
   }
 
   const handleCleanupWorkspace = async () => {
-    if (!workspacePath) {
-      setMessage('请先打开工作区后再清理失效索引')
+    if (workspacePaths.length === 0) {
+      setMessage('请先添加工作区后再清理失效索引')
       return
     }
     setEmbedding(true)
     try {
-      const result = await cleanupMissingWorkspaceDocuments(workspacePath)
+      const result = await cleanupMissingWorkspaceDocuments(workspacePaths)
       await refreshStats()
-      setMessage(result.removed > 0 ? `已清理 ${result.removed} 个失效索引` : '未发现失效索引')
+      const summary = result.removed > 0 ? `已清理 ${result.removed} 个失效索引` : '未发现失效索引'
+      setMessage(result.errors.length > 0 ? `${summary}，${result.errors.length} 个工作区不可用` : summary)
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1035,13 +1037,13 @@ function KnowledgeStats({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: ()
   }
 
   const handleRebuildWorkspace = async () => {
-    if (!workspacePath) {
-      setMessage('请先打开工作区后再重建索引')
+    if (workspacePaths.length === 0) {
+      setMessage('请先添加工作区后再重建索引')
       return
     }
     setEmbedding(true)
     try {
-      const result = await rebuildWorkspaceDocuments(workspacePath)
+      const result = await rebuildWorkspaceDocuments(workspacePaths)
       await refreshStats()
       setLastIndexedAt(Date.now())
       setMessage(`重建完成：移除 ${result.removed} 个旧索引，重新索引 ${result.indexed} 个文件，失败 ${result.failed} 个`)
@@ -1547,7 +1549,7 @@ const MEMORY_PAGE_SIZE = 20
 const CANDIDATE_PAGE_SIZE = 10
 
 export function MemorySettings() {
-  const workspacePath = useAppStore((s) => s.workspacePath)
+  const workspacePath = useAppStore(selectPrimaryWorkspacePath)
   const [memories, setMemories] = useState<Memory[]>([])
   const [candidateMemories, setCandidateMemories] = useState<Memory[]>([])
   const [memoryCounts, setMemoryCounts] = useState({ active: 0, candidate: 0, archived: 0 })

@@ -13,7 +13,7 @@ import { readFile } from '@/hooks/useTauri'
 import type { TextRange } from './editTarget'
 import { normalizeFilePath } from '@/services/pathIdentity'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { useAppStore } from '@/stores/appStore'
+import { selectPrimaryWorkspacePath, useAppStore } from '@/stores/appStore'
 import { getEmbeddingClient, getEmbeddingConfig, isEmbeddingReady } from '@/services/ai/aiClient'
 import {
   buildSelectionContextWindow,
@@ -851,7 +851,7 @@ export function registerBuiltinTools() {
       const batchEmbedding = isEmbeddingReady()
         ? async (texts: string[], signal?: AbortSignal) => getEmbeddingClient().batchEmbedding(texts, signal)
         : undefined
-      const workspacePath = useAppStore.getState().workspacePath
+      const workspacePath = selectPrimaryWorkspacePath(useAppStore.getState())
       const memories = await searchMemories(args.query as string, {
         mode: 'strong',
         topK,
@@ -881,7 +881,7 @@ export function registerBuiltinTools() {
         ? (args.category as string)
         : 'preference'
       const result = await upsertExplicitMemory(args.content as string, category, {
-        workspacePath: useAppStore.getState().workspacePath,
+        workspacePath: selectPrimaryWorkspacePath(useAppStore.getState()),
       })
       return `${result.action === 'updated' ? '已更新已有记忆' : '已保存新记忆'}：「${result.memory.content}」（分类：${result.memory.category}）`
     },

@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { useAppStore } from '@/stores/appStore'
+import { selectPrimaryWorkspacePath, useAppStore } from '@/stores/appStore'
 import { getAiClient, getEmbeddingClient, getEmbeddingConfig, initAiClient, initEmbeddingClient, isAiReady, isEmbeddingReady, isLocalApi } from '@/services/ai/aiClient'
 import { SYSTEM_TEMPERATURE } from '@/services/ai/types'
 import { initAgent, runAgent } from '@/services/agent'
@@ -106,7 +106,7 @@ export function useAiChat() {
   const clearTimeline = useChatStore((s) => s.clearTimeline)
   const setAgentTaskContext = useChatStore((s) => s.setAgentTaskContext)
   const ai = useSettingsStore((s) => s.ai)
-  const workspacePath = useAppStore((s) => s.workspacePath)
+  const workspacePath = useAppStore(selectPrimaryWorkspacePath)
   const lastConfigRef = useRef('')
   const cancelRef = useRef<() => void>(() => {})
   const activeRequestRef = useRef<{ id: string; assistantMessageId: string; cancelled: boolean } | null>(null)
