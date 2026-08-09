@@ -74,6 +74,7 @@ export function FullscreenControlBar({
   const [themeCardOpen, setThemeCardOpen] = useState(false)
   const hideTimerRef = useRef<number | null>(null)
   const contentTimerRef = useRef<number | null>(null)
+  const pointerWithinControlRef = useRef(false)
   const shellRef = useRef<HTMLDivElement>(null)
   const widthBeforeRef = useRef<number>(0)
   const widthAnimatingRef = useRef(false)
@@ -134,6 +135,16 @@ export function FullscreenControlBar({
     }, tabMode ? 2200 : 700)
   }, [clearHideTimer, contextMenu, fileDrawerOpen, paddingCardOpen, switchPanel, tabMode, themeCardOpen])
 
+  const handleControlMouseEnter = useCallback(() => {
+    pointerWithinControlRef.current = true
+    showBar()
+  }, [showBar])
+
+  const handleControlMouseLeave = useCallback(() => {
+    pointerWithinControlRef.current = false
+    scheduleHide()
+  }, [scheduleHide])
+
   useEffect(() => () => {
     clearHideTimer()
     clearPanelTimers()
@@ -148,6 +159,11 @@ export function FullscreenControlBar({
       switchPanel(false)
     }
   }, [clearHideTimer, contextMenu, fileDrawerOpen, switchPanel])
+
+  useEffect(() => {
+    if (!visible || fileDrawerOpen || paddingCardOpen || themeCardOpen) return
+    if (!pointerWithinControlRef.current) scheduleHide()
+  }, [contextMenu, fileDrawerOpen, paddingCardOpen, scheduleHide, themeCardOpen, visible])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -390,14 +406,19 @@ export function FullscreenControlBar({
 
   return (
     <>
-      <div className="fixed left-1/2 top-0 z-40 h-9 w-[min(960px,calc(100vw-32px))] -translate-x-1/2" onMouseEnter={showBar} />
+      <div
+        data-fullscreen-control-trigger="true"
+        className="fixed left-1/2 top-0 z-40 h-9 w-[min(960px,calc(100vw-32px))] -translate-x-1/2"
+        onMouseEnter={handleControlMouseEnter}
+        onMouseLeave={handleControlMouseLeave}
+      />
       <div
         data-fullscreen-control-bar="true"
         className={`fixed left-1/2 top-4 z-50 max-w-[calc(100vw-32px)] -translate-x-1/2 overflow-visible transition-[opacity,transform] duration-300 ease-out ${
           visible ? 'translate-y-0 opacity-100' : '-translate-y-1.5 opacity-0 pointer-events-none'
         }`}
-        onMouseEnter={showBar}
-        onMouseLeave={scheduleHide}
+        onMouseEnter={handleControlMouseEnter}
+        onMouseLeave={handleControlMouseLeave}
       >
         <div
           ref={shellRef}
