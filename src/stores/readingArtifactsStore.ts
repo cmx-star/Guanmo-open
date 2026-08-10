@@ -15,6 +15,7 @@ import {
   loadReadingArtifacts,
   deleteReadingArtifact,
   checkReadingArtifactSource,
+  mergeReadingArtifactQuestionMetadata,
 } from '@/services/database/readingArtifacts'
 import { loadDocumentContentHashByPath } from '@/services/database/persistence'
 
@@ -44,6 +45,8 @@ export interface SaveFromMessageInput {
   sources?: ChatMessageSource[]
   contextScope?: ReadingScope
   messageId?: string
+  /** 产生该 AI 回复的原始用户提问，写入 structured_content 元数据。 */
+  question?: string
   /** 类型专属结构化字段，经运行时解码后写入 structured_content */
   structuredContent?: unknown | null
 }
@@ -129,7 +132,7 @@ export const useReadingArtifactsStore = create<ReadingArtifactsState>((set, get)
       type: input.type,
       title: input.title,
       content: input.content,
-      structuredContent: input.structuredContent ?? null,
+      structuredContent: mergeReadingArtifactQuestionMetadata(input.structuredContent, input.question),
       source,
     })
     await get().loadArtifacts()

@@ -17,6 +17,7 @@ import { isSameFilePath } from '@/services/pathIdentity'
 import { toast } from '@/services/toast'
 import type {
   ChatMessageContextMeta,
+  ChatMessage,
   ChatMessageSource,
   LocalChatMessageSource,
   ActionProposal,
@@ -31,6 +32,7 @@ import {
   type SourceAnchorStatus,
   type AnnotationStructuredContent,
   getAnnotationStructuredContent,
+  getReadingArtifactQuestion,
   loadReadingArtifactById,
   resolveAnnotationPosition,
 } from '@/services/database/readingArtifacts'
@@ -57,6 +59,17 @@ type AiPanelProps = {
 const STREAM_START_FOLLOW_PX = 180
 const STREAM_GROWTH_FOLLOW_PX = 120
 const STREAM_BOTTOM_GAP_PX = 96
+const SAVE_CONTROLS_HIDE_DELAY_MS = 700
+
+export function buildUserQuestionMap(messages: ChatMessage[]): Map<string, string> {
+  const questions = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role !== 'user' || !message.id) continue
+    const question = (message.displayContent ?? message.content).trim()
+    if (question) questions.set(message.id, question)
+  }
+  return questions
+}
 
 export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const toggleAiPanel = useAppStore((s) => s.toggleAiPanel)
@@ -75,7 +88,10 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const streamingRef = useRef(streaming)
   const streamScrollInterruptedRef = useRef(false)
   const pendingOutgoingMessageCountRef = useRef<number | null>(null)
+  const returnToChatScrollFrameRef = useRef<number | null>(null)
+  const shouldScrollAfterReturnRef = useRef(false)
   const visibleMessages = useMemo(() => messages.filter((msg) => !msg.hidden), [messages])
+  const userQuestionsById = useMemo(() => buildUserQuestionMap(messages), [messages])
   const [reasoningMode, setReasoningMode] = useState<'off' | 'on'>('off')
   const [resetManualToggle, setResetManualToggle] = useState(0)
   const [panelView, setPanelView] = useState<'chat' | 'artifacts' | 'reminders'>('chat')
@@ -96,6 +112,24 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
       loadArtifacts()
     }
   }, [panelView, loadArtifacts])
+
+  useEffect(() => {
+    if (panelView !== 'chat' || !shouldScrollAfterReturnRef.current) return
+    shouldScrollAfterReturnRef.current = false
+    returnToChatScrollFrameRef.current = requestAnimationFrame(() => {
+      returnToChatScrollFrameRef.current = null
+      const container = chatContainerRef.current
+      if (!container) return
+      programmaticScrollUntilRef.current = Date.now() + 120
+      container.scrollTo({ top: container.scrollHeight })
+    })
+    return () => {
+      if (returnToChatScrollFrameRef.current !== null) {
+        cancelAnimationFrame(returnToChatScrollFrameRef.current)
+        returnToChatScrollFrameRef.current = null
+      }
+    }
+  }, [panelView])
 
   const refreshReminders = useCallback(async () => {
     setRemindersLoading(true)
@@ -400,8 +434,19 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     toast.error('提醒来源当前不可用')
   }, [handleOpenArtifactSource, handleOpenRagSource, messages])
 
-  const handleSaveAssistantAsMarkdown = useCallback(async (content: string, sources?: ChatMessageSource[]) => {
-    await saveAssistantMessageAsMarkdown(content, sources)
+  const handleReturnToChat = useCallback(() => {
+    autoFollowRef.current = true
+    streamScrollInterruptedRef.current = false
+    shouldScrollAfterReturnRef.current = true
+    setPanelView('chat')
+  }, [])
+
+  const handleSaveAssistantAsMarkdown = useCallback(async (
+    content: string,
+    sources?: ChatMessageSource[],
+    question?: string,
+  ) => {
+    await saveAssistantMessageAsMarkdown(content, sources, question)
   }, [])
 
   const handleSaveAssistantAsArtifact = useCallback(async (
@@ -410,6 +455,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
     sources: ChatMessageSource[] | undefined,
     contextMeta: ChatMessageContextMeta | undefined,
     messageId: string | undefined,
+    question: string | undefined,
   ) => {
     const trimmed = content.trim()
     if (!trimmed) return
@@ -434,6 +480,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
           sources,
           contextScope: contextMeta?.readingScope,
           messageId,
+          question,
           structuredContent: structured,
         })
         if (saved) {
@@ -456,6 +503,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
         sources,
         contextScope: contextMeta?.readingScope,
         messageId,
+        question,
       })
       if (saved) {
         toast.success(`已保存为${ARTIFACT_TYPE_LABELS[type]}`)
@@ -539,7 +587,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             <Button
               type="text"
               size="small"
-              onClick={() => setPanelView('chat')}
+              onClick={handleReturnToChat}
               title="返回"
               icon={
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -627,6 +675,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             {visibleMessages.map((msg, i) => {
               const prevMsg = i > 0 ? visibleMessages[i - 1] : null
               const messageKey = msg.id || `${msg.role}-${msg.sessionId || 'live'}-${msg.timestamp || i}`
+              const parentQuestion = msg.parentId ? userQuestionsById.get(msg.parentId) : undefined
               // 历史会话之间的分隔线
               const showSessionDivider = Boolean(msg.sessionId && msg.sessionId !== prevMsg?.sessionId)
               // 历史消息 → 当前消息的分隔线
@@ -654,7 +703,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                     msg.role === 'assistant'
                       && Boolean((msg.displayContent ?? msg.content).trim())
                       && !(i === visibleMessages.length - 1 && streaming)
-                      ? () => handleSaveAssistantAsMarkdown(msg.displayContent ?? msg.content, msg.sources)
+                      ? () => handleSaveAssistantAsMarkdown(msg.displayContent ?? msg.content, msg.sources, parentQuestion)
                       : undefined
                   }
                   onSaveAsArtifact={
@@ -667,6 +716,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                           msg.sources,
                           msg.contextMeta,
                           msg.id,
+                          parentQuestion,
                         )
                       : undefined
                   }
@@ -986,6 +1036,7 @@ function ReadingArtifactCard({
   const annotation = artifact.type === 'annotation'
     ? getAnnotationStructuredContent(artifact)
     : null
+  const question = getReadingArtifactQuestion(artifact)
 
   const sourceLabel = artifact.source?.fileName
     ? [
@@ -1016,23 +1067,25 @@ function ReadingArtifactCard({
   }
 
   return (
-    <div className="rounded-xl border border-gm-border bg-gm-surface-elevated p-3 animate-slideInUp">
+    <div className="rounded-xl border border-gm-border-subtle bg-gm-surface px-3 py-2.5 transition-colors hover:border-gm-border animate-slideInUp">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 text-left"
+        className="flex w-full min-w-0 items-center gap-2 text-left"
+        aria-expanded={expanded}
       >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}>
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-        <span className="rounded-full border border-gm-border bg-gm-surface px-1.5 py-0.5 text-micro font-bold text-gm-text-tertiary flex-shrink-0">
+        <span className="flex-shrink-0 rounded-md bg-gm-surface-hover px-1.5 py-0.5 text-micro font-bold text-gm-text-tertiary">
           {ARTIFACT_TYPE_LABELS[artifact.type]}
         </span>
-        <span className="font-bold text-gm-text text-caption truncate">{artifact.title}</span>
+        <span className="min-w-0 flex-1 truncate text-caption font-bold text-gm-text">{artifact.title}</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className={`ml-auto flex-shrink-0 text-gm-text-tertiary transition-transform ${expanded ? 'rotate-90' : ''}`}>
+          <path d="M9 18l6-6-6-6" />
+        </svg>
       </button>
 
       {sourceLabel && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-micro text-gm-text-tertiary pl-5">
+        <div className="mt-1.5 flex items-center gap-1.5 text-micro text-gm-text-tertiary">
+          <span className="flex-shrink-0 font-bold">来源</span>
           <span className="truncate">{sourceLabel}</span>
           {anchorChanged && (
             <span className="flex-shrink-0 rounded-full bg-[#f5c31c]/15 text-[#b8860b] px-1.5 py-0.5 font-bold">来源已变化</span>
@@ -1043,7 +1096,7 @@ function ReadingArtifactCard({
         </div>
       )}
       {(anchorChanged || anchorMissing) && (
-        <div className="mt-1.5 ml-5 text-micro text-gm-text-tertiary">
+        <div className="mt-1.5 text-micro text-gm-text-tertiary">
           {anchorChanged
             ? '原文已修改，定位可能偏移；打开来源时会尝试用引用快照重新定位。'
             : '来源文件已不可访问或未索引。'}
@@ -1051,26 +1104,35 @@ function ReadingArtifactCard({
       )}
 
       {expanded && (
-        <div className="mt-2 ml-5 rounded-lg bg-gm-canvas border border-gm-border p-2 max-h-[280px] overflow-auto">
+        <div className="mt-3 max-h-[360px] space-y-3 overflow-auto border-t border-gm-border-subtle pt-3 pr-1">
+          {question && (
+            <ArtifactQuestion question={question} />
+          )}
           {annotation ? (
             <AnnotationDetail annotation={annotation} fallbackContent={artifact.content} />
           ) : (
-            <AssistantMarkdown content={artifact.content} />
+            <div className="rounded-lg bg-gm-canvas px-2.5 py-2.5">
+              <div className="mb-1.5 text-micro font-bold text-gm-text-tertiary">成果内容</div>
+              <AssistantMarkdown content={artifact.content} compact />
+            </div>
           )}
           {artifact.source?.quote && !annotation && (
-            <div className="mt-2 pl-3 border-l-2 border-gm-border text-micro text-gm-text-tertiary italic">
-              「{artifact.source.quote}」
+            <div className="rounded-lg bg-gm-surface-hover px-2.5 py-2">
+              <div className="mb-1 text-micro font-bold text-gm-text-tertiary">引用原文</div>
+              <div className="border-l-2 border-gm-border pl-2.5 text-micro leading-relaxed text-gm-text-secondary italic">
+                「{artifact.source.quote}」
+              </div>
             </div>
           )}
         </div>
       )}
 
-      <div className="mt-2 flex items-center gap-2 pl-5">
+      <div className="mt-3 flex items-center gap-1 border-t border-gm-border-subtle pt-2">
         {canOpenSource && (
           <button
             type="button"
             onClick={handleOpen}
-            className="px-2 py-1 rounded-lg text-micro text-gm-primary hover:bg-gm-surface-hover border border-gm-border"
+            className="rounded-md px-1.5 py-1 text-micro text-gm-primary hover:bg-gm-surface-hover"
             title="打开来源"
           >
             打开来源
@@ -1083,7 +1145,7 @@ function ReadingArtifactCard({
               onDelete(artifact.id)
             }
           }}
-          className="px-2 py-1 rounded-lg text-micro text-gm-text-tertiary hover:text-gm-error hover:bg-gm-surface-hover border border-gm-border"
+          className="rounded-md px-1.5 py-1 text-micro text-gm-text-tertiary hover:bg-gm-error/10 hover:text-gm-error"
           title="删除成果"
         >
           删除
@@ -1096,6 +1158,54 @@ function ReadingArtifactCard({
   )
 }
 
+function ArtifactQuestion({ question }: { question: string }) {
+  const textRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [collapsible, setCollapsible] = useState(false)
+
+  useEffect(() => {
+    setExpanded(false)
+    const text = textRef.current
+    if (!text) return
+    const updateCollapsible = () => {
+      const hasManyLines = question.split('\n').length > 3
+      setCollapsible(hasManyLines || question.length > 72 || text.scrollHeight > text.clientHeight + 1)
+    }
+    updateCollapsible()
+    const observer = new ResizeObserver(updateCollapsible)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [question])
+
+  return (
+    <div className="rounded-lg bg-gm-primary/5 px-2.5 py-2.5">
+      <div className="mb-1.5 text-micro font-bold text-gm-primary">原问题</div>
+      <div
+        ref={textRef}
+        className="whitespace-pre-wrap break-words text-caption leading-relaxed text-gm-text-secondary"
+        style={expanded ? undefined : {
+          display: '-webkit-box',
+          WebkitBoxOrient: 'vertical',
+          WebkitLineClamp: 3,
+          overflow: 'hidden',
+        }}
+      >
+        {question}
+      </div>
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 rounded px-1 py-0.5 text-micro text-gm-primary hover:bg-gm-surface"
+          aria-expanded={expanded}
+        >
+          {expanded ? '收起问题' : '展开问题'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function AnnotationDetail({
   annotation,
   fallbackContent,
@@ -1104,11 +1214,17 @@ function AnnotationDetail({
   fallbackContent: string
 }) {
   return (
-    <div className="space-y-2">
-      <div className="pl-3 border-l-2 border-gm-primary text-micro text-gm-text-secondary italic break-words">
-        「{annotation.quote}」
+    <div className="space-y-3">
+      <div className="rounded-lg bg-gm-surface-hover px-2.5 py-2.5">
+        <div className="mb-1.5 text-micro font-bold text-gm-text-tertiary">引用原文</div>
+        <div className="border-l-2 border-gm-primary pl-2.5 text-micro leading-relaxed text-gm-text-secondary italic break-words">
+          「{annotation.quote}」
+        </div>
       </div>
-      <AssistantMarkdown content={annotation.note || fallbackContent} />
+      <div className="rounded-lg bg-gm-canvas px-2.5 py-2.5">
+        <div className="mb-1.5 text-micro font-bold text-gm-text-tertiary">批注内容</div>
+        <AssistantMarkdown content={annotation.note || fallbackContent} compact />
+      </div>
     </div>
   )
 }
@@ -1200,7 +1316,9 @@ export const ChatBubble = memo(function ChatBubble({
   const isAssistantStreaming = !isUser && isLast && streaming
   const bubbleRef = useRef<HTMLDivElement>(null)
   const saveMenuRef = useRef<HTMLDivElement>(null)
+  const saveControlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [saveMenuOpen, setSaveMenuOpen] = useState(false)
+  const [saveControlsVisible, setSaveControlsVisible] = useState(false)
   // 批注需绑定本地来源范围；仅当存在非 web 来源时显示「批注」按钮
   const hasLocalSource = Boolean(sources?.some((s) => s.kind !== 'web'))
 
@@ -1217,13 +1335,41 @@ export const ChatBubble = memo(function ChatBubble({
     }
   }, [])
 
+  const clearSaveControlsHideTimer = useCallback(() => {
+    if (saveControlsHideTimerRef.current === null) return
+    clearTimeout(saveControlsHideTimerRef.current)
+    saveControlsHideTimerRef.current = null
+  }, [])
+
+  const showSaveControls = useCallback(() => {
+    clearSaveControlsHideTimer()
+    setSaveControlsVisible(true)
+  }, [clearSaveControlsHideTimer])
+
+  const scheduleSaveControlsHide = useCallback(() => {
+    clearSaveControlsHideTimer()
+    saveControlsHideTimerRef.current = setTimeout(() => {
+      saveControlsHideTimerRef.current = null
+      if (saveMenuOpen || saveMenuRef.current?.contains(document.activeElement)) return
+      setSaveControlsVisible(false)
+    }, SAVE_CONTROLS_HIDE_DELAY_MS)
+  }, [clearSaveControlsHideTimer, saveMenuOpen])
+
+  useEffect(() => clearSaveControlsHideTimer, [clearSaveControlsHideTimer])
+
   useEffect(() => {
     if (!saveMenuOpen) return
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!saveMenuRef.current?.contains(event.target as Node)) setSaveMenuOpen(false)
+      if (!saveMenuRef.current?.contains(event.target as Node)) {
+        setSaveMenuOpen(false)
+        setSaveControlsVisible(false)
+      }
     }
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSaveMenuOpen(false)
+      if (event.key === 'Escape') {
+        setSaveMenuOpen(false)
+        setSaveControlsVisible(false)
+      }
     }
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     document.addEventListener('keydown', closeOnEscape)
@@ -1235,13 +1381,22 @@ export const ChatBubble = memo(function ChatBubble({
 
   const runSaveAction = (action: () => void) => {
     setSaveMenuOpen(false)
+    setSaveControlsVisible(false)
     action()
   }
 
   const canSave = !isUser && !isEmpty && Boolean(content.trim()) && Boolean(onSaveAsMarkdown || onSaveAsArtifact)
 
   return (
-    <div className={`flex min-w-0 ${isUser ? 'justify-end' : 'justify-start'} animate-slideInUp`}>
+    <div
+      className={`flex min-w-0 ${isUser ? 'justify-end' : 'justify-start'} animate-slideInUp`}
+      onPointerEnter={canSave ? showSaveControls : undefined}
+      onPointerLeave={canSave ? scheduleSaveControlsHide : undefined}
+      onFocusCapture={canSave ? showSaveControls : undefined}
+      onBlurCapture={canSave ? (event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleSaveControlsHide()
+      } : undefined}
+    >
       {!isUser && (
         <AiAvatar size="message" streaming={isAssistantStreaming} bounce={isEmpty} />
       )}
@@ -1279,18 +1434,22 @@ export const ChatBubble = memo(function ChatBubble({
           <div
             ref={saveMenuRef}
             className={`absolute bottom-0 left-full z-20 pl-1 transition-opacity ${
-              saveMenuOpen
+              saveMenuOpen || saveControlsVisible
                 ? 'pointer-events-auto opacity-100'
-                : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'
+                : 'pointer-events-none opacity-0'
             }`}
           >
             <Button
               type="default"
               size="small"
-              onClick={() => setSaveMenuOpen((open) => !open)}
+              onClick={() => {
+                showSaveControls()
+                setSaveMenuOpen((open) => !open)
+              }}
               title="保存回复"
               aria-label="保存回复"
               aria-expanded={saveMenuOpen}
+              aria-haspopup="menu"
               className="!h-6 !w-6 !min-w-0 !rounded-full !p-0"
             >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -1300,18 +1459,18 @@ export const ChatBubble = memo(function ChatBubble({
               </svg>
             </Button>
             {saveMenuOpen && (
-              <div className="absolute bottom-full right-0 mb-1 min-w-32 rounded-lg border border-gm-border bg-gm-surface-elevated p-1 shadow-lg">
+              <div role="menu" className="absolute bottom-full right-0 mb-1 min-w-32 rounded-lg border border-gm-border bg-gm-surface-elevated p-1 shadow-lg">
                 {onSaveAsMarkdown && (
-                  <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(onSaveAsMarkdown)}>Markdown</Button>
+                  <Button role="menuitem" type="text" size="small" className="w-full justify-start hover:bg-gm-surface-hover focus-visible:bg-gm-surface-hover" onClick={() => runSaveAction(onSaveAsMarkdown)}>Markdown</Button>
                 )}
                 {onSaveAsArtifact && (
                   <>
-                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('summary'))}>摘要</Button>
-                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('question_set'))}>问题集</Button>
+                    <Button role="menuitem" type="text" size="small" className="w-full justify-start hover:bg-gm-surface-hover focus-visible:bg-gm-surface-hover" onClick={() => runSaveAction(() => onSaveAsArtifact('summary'))}>摘要</Button>
+                    <Button role="menuitem" type="text" size="small" className="w-full justify-start hover:bg-gm-surface-hover focus-visible:bg-gm-surface-hover" onClick={() => runSaveAction(() => onSaveAsArtifact('question_set'))}>问题集</Button>
                     {hasLocalSource && (
-                      <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('annotation'))}>批注</Button>
+                      <Button role="menuitem" type="text" size="small" className="w-full justify-start hover:bg-gm-surface-hover focus-visible:bg-gm-surface-hover" onClick={() => runSaveAction(() => onSaveAsArtifact('annotation'))}>批注</Button>
                     )}
-                    <Button type="text" size="small" className="w-full justify-start" onClick={() => runSaveAction(() => onSaveAsArtifact('note'))}>阅读笔记</Button>
+                    <Button role="menuitem" type="text" size="small" className="w-full justify-start hover:bg-gm-surface-hover focus-visible:bg-gm-surface-hover" onClick={() => runSaveAction(() => onSaveAsArtifact('note'))}>阅读笔记</Button>
                   </>
                 )}
               </div>
@@ -1491,12 +1650,33 @@ const ASSISTANT_MARKDOWN_COMPONENTS: Components = {
   del: ({ children }) => <del className="text-gm-text-tertiary">{children}</del>,
 }
 
-const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
+const ARTIFACT_MARKDOWN_COMPONENTS: Components = {
+  ...ASSISTANT_MARKDOWN_COMPONENTS,
+  p: ({ children }) => <p className="my-2 text-caption leading-relaxed">{children}</p>,
+  h1: ({ children }) => <h1 className="mt-3.5 mb-1.5 text-caption font-bold text-gm-text">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-3.5 mb-1.5 text-caption font-bold text-gm-text">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-3 mb-1.5 text-caption font-bold text-gm-text">{children}</h3>,
+  h4: ({ children }) => <h4 className="mt-3 mb-1.5 text-caption font-bold text-gm-text">{children}</h4>,
+  h5: ({ children }) => <h5 className="mt-3 mb-1.5 text-caption font-bold text-gm-text">{children}</h5>,
+  h6: ({ children }) => <h6 className="mt-3 mb-1.5 text-caption font-bold text-gm-text">{children}</h6>,
+  ul: ({ children }) => <ul className="my-2 space-y-1.5 pl-4 text-caption list-disc">{children}</ul>,
+  ol: ({ children }) => <ol className="my-2 space-y-1.5 pl-4 text-caption list-decimal">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed marker:text-gm-text-tertiary">{children}</li>,
+  hr: () => <hr className="my-3.5 border-gm-border-subtle" />,
+}
+
+const AssistantMarkdown = memo(function AssistantMarkdown({
+  content,
+  compact = false,
+}: {
+  content: string
+  compact?: boolean
+}) {
   return (
-    <div className="ai-message-content max-w-none min-w-0 overflow-wrap-anywhere [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+    <div className={`ai-message-content max-w-none min-w-0 overflow-wrap-anywhere [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ${compact ? 'text-caption text-gm-text-secondary' : ''}`}>
       <ReactMarkdown
         remarkPlugins={ASSISTANT_MARKDOWN_REMARK_PLUGINS}
-        components={ASSISTANT_MARKDOWN_COMPONENTS}
+        components={compact ? ARTIFACT_MARKDOWN_COMPONENTS : ASSISTANT_MARKDOWN_COMPONENTS}
       >
         {content}
       </ReactMarkdown>

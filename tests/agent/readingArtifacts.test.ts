@@ -4,6 +4,8 @@ import {
   checkReadingArtifactSource,
   decodeAnnotationStructuredContent,
   getAnnotationStructuredContent,
+  getReadingArtifactQuestion,
+  mergeReadingArtifactQuestionMetadata,
   resolveAnnotationPosition,
   computeAnnotationFingerprint,
   findMarkdownBlockByOffset,
@@ -112,6 +114,33 @@ describe('decodeReadingArtifact', () => {
   })
 })
 
+describe('阅读成果问题元数据', () => {
+  it('为普通成果保存问题且不改动既有结构化字段', () => {
+    expect(mergeReadingArtifactQuestionMetadata(
+      { points: ['要点A'] },
+      '  对应的匿名问题  ',
+    )).toEqual({ points: ['要点A'], question: '对应的匿名问题' })
+  })
+
+  it('旧成果或空问题保持兼容', () => {
+    expect(mergeReadingArtifactQuestionMetadata(null, undefined)).toBeNull()
+    expect(mergeReadingArtifactQuestionMetadata({ points: ['要点A'] }, '  ')).toEqual({ points: ['要点A'] })
+    expect(getReadingArtifactQuestion(decodeReadingArtifact(baseRow()))).toBeNull()
+  })
+
+  it('可从四类成果通用 structured_content 中安全读取问题', () => {
+    for (const type of ['summary', 'question_set', 'annotation', 'note'] as const) {
+      const artifact = decodeReadingArtifact(baseRow({
+        type,
+        structured_content: type === 'annotation'
+          ? '{"quote":"原文","note":"批注","question":"匿名问题"}'
+          : '{"question":"匿名问题"}',
+      }))
+      expect(getReadingArtifactQuestion(artifact)).toBe('匿名问题')
+    }
+  })
+})
+
 describe('checkReadingArtifactSource', () => {
   const anchor = {
     filePath: 'C:/anonymous/note.md',
@@ -164,12 +193,14 @@ describe('decodeAnnotationStructuredContent', () => {
     const decoded = decodeAnnotationStructuredContent({
       quote: '被批注的原文',
       note: '这是批注正文',
+      question: '对应的匿名问题',
       contextFingerprint: 'fp-1',
       startOffset: 10,
       endOffset: 20,
     })
     expect(decoded.quote).toBe('被批注的原文')
     expect(decoded.note).toBe('这是批注正文')
+    expect(decoded.question).toBe('对应的匿名问题')
     expect(decoded.contextFingerprint).toBe('fp-1')
     expect(decoded.startOffset).toBe(10)
     expect(decoded.endOffset).toBe(20)

@@ -192,6 +192,28 @@ export interface PersistReadingArtifactInput {
   source?: ReadingArtifactSourceAnchor | null
 }
 
+/** 把对应用户提问合并进成果结构化元数据，不改动既有类型专属字段。 */
+export function mergeReadingArtifactQuestionMetadata(
+  structuredContent: unknown | null | undefined,
+  question: string | undefined,
+): unknown | null {
+  const normalizedQuestion = question?.trim()
+  if (!normalizedQuestion) return structuredContent ?? null
+  if (isPlainObject(structuredContent)) {
+    return { ...structuredContent, question: normalizedQuestion }
+  }
+  return structuredContent === null || structuredContent === undefined
+    ? { question: normalizedQuestion }
+    : { question: normalizedQuestion, content: structuredContent }
+}
+
+/** 安全读取成果中保存的用户提问；旧成果或损坏字段返回 null。 */
+export function getReadingArtifactQuestion(artifact: ReadingArtifact): string | null {
+  if (!isPlainObject(artifact.structuredContent)) return null
+  const question = artifact.structuredContent.question
+  return typeof question === 'string' && question.trim() ? question : null
+}
+
 export async function persistReadingArtifact(
   input: PersistReadingArtifactInput,
 ): Promise<void> {
@@ -404,6 +426,7 @@ export async function checkReadingArtifactSource(
 export interface AnnotationStructuredContent {
   quote: string
   note: string
+  question?: string
   contextFingerprint?: string | null
   startOffset?: number | null
   endOffset?: number | null
@@ -426,6 +449,9 @@ export function decodeAnnotationStructuredContent(value: unknown): AnnotationStr
   }
   const quote = assertNonEmptyString(value.quote, 'quote')
   const note = assertNonEmptyString(value.note, 'note')
+  const question = typeof value.question === 'string' && value.question.trim()
+    ? value.question
+    : undefined
   const contextFingerprint =
     typeof value.contextFingerprint === 'string' ? value.contextFingerprint : null
   const startOffset =
@@ -436,7 +462,7 @@ export function decodeAnnotationStructuredContent(value: unknown): AnnotationStr
     typeof value.endOffset === 'number' && Number.isFinite(value.endOffset)
       ? value.endOffset
       : null
-  return { quote, note, contextFingerprint, startOffset, endOffset }
+  return { quote, note, ...(question ? { question } : {}), contextFingerprint, startOffset, endOffset }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
