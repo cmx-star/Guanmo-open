@@ -399,6 +399,66 @@ export interface LoadReadingArtifactsOptions {
   offset?: number
 }
 
+export interface LoadReadingArtifactsPageOptions {
+  type?: ReadingArtifactType
+  status?: ReadingArtifactStatus
+  query?: string
+  limit?: number
+  offset?: number
+}
+
+export interface ReadingArtifactsPage {
+  artifacts: ReadingArtifact[]
+  total: number
+}
+
+const DEFAULT_READING_ARTIFACT_PAGE_SIZE = 20
+const MAX_READING_ARTIFACT_PAGE_SIZE = 100
+
+function buildReadingArtifactWhere(
+  options: Pick<LoadReadingArtifactsPageOptions, 'type' | 'status' | 'query'>,
+): { where: string; params: unknown[] } {
+  const clauses: string[] = []
+  const params: unknown[] = []
+  if (options.type) {
+    params.push(options.type)
+    clauses.push(`type = $${params.length}`)
+  }
+  if (options.status) {
+    params.push(options.status)
+    clauses.push(`status = $${params.length}`)
+  }
+  const query = options.query?.trim()
+  if (query) {
+    const escapedQuery = query.replace(/!/g, '!!').replace(/%/g, '!%').replace(/_/g, '!_')
+    params.push(`%${escapedQuery}%`)
+    const queryParam = `$${params.length}`
+    clauses.push(`(
+      title LIKE ${queryParam} ESCAPE '!'
+      OR content LIKE ${queryParam} ESCAPE '!'
+      OR COALESCE(source_file_name, '') LIKE ${queryParam} ESCAPE '!'
+      OR COALESCE(source_quote, '') LIKE ${queryParam} ESCAPE '!'
+      OR COALESCE(structured_content, '') LIKE ${queryParam} ESCAPE '!'
+    )`)
+  }
+  return {
+    where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  }
+}
+
+function normalizeReadingArtifactPageLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_READING_ARTIFACT_PAGE_SIZE
+  }
+  return Math.min(Math.floor(value), MAX_READING_ARTIFACT_PAGE_SIZE)
+}
+
+function normalizeReadingArtifactPageOffset(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return 0
+  return Math.floor(value)
+}
+
 export async function loadReadingArtifacts(
   options: LoadReadingArtifactsOptions = {},
 ): Promise<ReadingArtifact[]> {
@@ -420,10 +480,35 @@ export async function loadReadingArtifacts(
   params.push(options.offset ?? 0)
   const offsetParam = `$${params.length}`
   const rows = await db.select<ReadingArtifactRow>(
-    `SELECT * FROM reading_artifacts ${where} ORDER BY updated_at DESC, created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    `SELECT * FROM reading_artifacts ${where} ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params,
   )
   return rows.map(decodeReadingArtifact)
+}
+
+export async function loadReadingArtifactsPage(
+  options: LoadReadingArtifactsPageOptions = {},
+): Promise<ReadingArtifactsPage> {
+  if (!isDatabaseReady()) return { artifacts: [], total: 0 }
+  const db = getDatabase()
+  const { where, params } = buildReadingArtifactWhere(options)
+  const countRows = await db.select<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM reading_artifacts ${where}`,
+    params,
+  )
+  const pageParams = [...params]
+  pageParams.push(normalizeReadingArtifactPageLimit(options.limit))
+  const limitParam = `$${pageParams.length}`
+  pageParams.push(normalizeReadingArtifactPageOffset(options.offset))
+  const offsetParam = `$${pageParams.length}`
+  const rows = await db.select<ReadingArtifactRow>(
+    `SELECT * FROM reading_artifacts ${where} ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    pageParams,
+  )
+  return {
+    artifacts: rows.map(decodeReadingArtifact),
+    total: Number(countRows[0]?.total) || 0,
+  }
 }
 
 export async function loadReadingArtifactById(

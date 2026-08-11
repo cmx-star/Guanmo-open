@@ -14,7 +14,8 @@ import {
   type SourceAnchorStatus,
   buildReadingArtifactReferences,
   persistReadingArtifact,
-  loadReadingArtifacts,
+  loadReadingArtifactById,
+  loadReadingArtifactsPage,
   deleteReadingArtifact,
   checkReadingArtifactSource,
   mergeReadingArtifactQuestionMetadata,
@@ -24,9 +25,15 @@ import { loadDocumentContentHashByPath } from '@/services/database/persistence'
 
 export type ReadingArtifactFilter = ReadingArtifactType | 'all'
 
+export const READING_ARTIFACT_PAGE_SIZE = 20
+
 interface ReadingArtifactsState {
   artifacts: ReadingArtifact[]
   filter: ReadingArtifactFilter
+  query: string
+  page: number
+  pageSize: number
+  total: number
   loading: boolean
   selectedId: string | null
   /** 已校验的来源锚点状态缓存：artifactId -> status */
@@ -34,6 +41,8 @@ interface ReadingArtifactsState {
 
   loadArtifacts: () => Promise<void>
   setFilter: (filter: ReadingArtifactFilter) => void
+  setQuery: (query: string) => void
+  setPage: (page: number) => void
   setSelected: (id: string | null) => void
   deleteArtifact: (id: string) => Promise<void>
   saveArtifactFromMessage: (input: SaveFromMessageInput) => Promise<ReadingArtifact | undefined>
@@ -88,36 +97,66 @@ function generateArtifactId(): string {
   return `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function normalizePage(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1
+}
+
+let loadRequestSequence = 0
+
 export const useReadingArtifactsStore = create<ReadingArtifactsState>((set, get) => ({
   artifacts: [],
   filter: 'all',
+  query: '',
+  page: 1,
+  pageSize: READING_ARTIFACT_PAGE_SIZE,
+  total: 0,
   loading: false,
   selectedId: null,
   anchorStatuses: {},
 
   loadArtifacts: async () => {
+    const requestId = ++loadRequestSequence
+    const { filter, query, page, pageSize } = get()
     set({ loading: true })
     try {
-      const artifacts = await loadReadingArtifacts({ status: 'active', limit: 500 })
-      set({ artifacts, loading: false })
+      const result = await loadReadingArtifactsPage({
+        type: filter === 'all' ? undefined : filter,
+        status: 'active',
+        query,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      })
+      if (requestId !== loadRequestSequence) return
+      const pageCount = Math.max(1, Math.ceil(result.total / pageSize))
+      const validPage = Math.min(page, pageCount)
+      if (validPage !== page) {
+        set({ page: validPage })
+        await get().loadArtifacts()
+        return
+      }
+      set({ artifacts: result.artifacts, total: result.total, loading: false })
     } catch {
-      set({ loading: false })
+      if (requestId === loadRequestSequence) set({ loading: false })
     }
   },
 
-  setFilter: (filter) => set({ filter }),
+  setFilter: (filter) => set({ filter, page: 1 }),
+
+  setQuery: (query) => set({ query, page: 1 }),
+
+  setPage: (page) => set({ page: normalizePage(page) }),
 
   setSelected: (id) => set({ selectedId: id }),
 
   deleteArtifact: async (id) => {
     await deleteReadingArtifact(id)
     set((state) => ({
-      artifacts: state.artifacts.filter((artifact) => artifact.id !== id),
       selectedId: state.selectedId === id ? null : state.selectedId,
       anchorStatuses: Object.fromEntries(
         Object.entries(state.anchorStatuses).filter(([key]) => key !== id),
       ),
     }))
+    await get().loadArtifacts()
   },
 
   saveArtifactFromMessage: async (input) => {
@@ -142,8 +181,9 @@ export const useReadingArtifactsStore = create<ReadingArtifactsState>((set, get)
       ),
       source,
     })
+    const saved = await loadReadingArtifactById(id)
     await get().loadArtifacts()
-    return get().artifacts.find((artifact) => artifact.id === id)
+    return saved
   },
 
   checkAnchor: async (artifact) => {

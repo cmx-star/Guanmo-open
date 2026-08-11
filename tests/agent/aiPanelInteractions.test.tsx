@@ -46,17 +46,25 @@ const readingArtifacts = vi.hoisted(() => ({
     updatedAt: 1,
   }],
   loading: false,
-  filter: 'all' as const,
+  filter: 'all' as 'all' | 'summary' | 'question_set' | 'annotation' | 'note',
+  query: '',
+  page: 1,
+  pageSize: 20,
+  total: 1,
   selectedId: null,
   anchorStatuses: {},
   loadArtifacts: vi.fn(),
   setFilter: vi.fn(),
+  setQuery: vi.fn(),
+  setPage: vi.fn(),
   setSelected: vi.fn(),
   deleteArtifact: vi.fn(),
   saveArtifactFromMessage: vi.fn(),
   checkAnchor: vi.fn(),
   resetAnchorStatus: vi.fn(),
 }))
+
+const artifactFixture = readingArtifacts.artifacts[0]
 
 vi.mock('@/hooks/useAiChat', () => ({
   useAiChat: () => aiChat,
@@ -70,6 +78,15 @@ describe('AI 面板视图返回', () => {
   const scrollTo = vi.fn()
 
   beforeEach(() => {
+    readingArtifacts.artifacts = [artifactFixture]
+    readingArtifacts.loading = false
+    readingArtifacts.filter = 'all'
+    readingArtifacts.query = ''
+    readingArtifacts.page = 1
+    readingArtifacts.pageSize = 20
+    readingArtifacts.total = 1
+    readingArtifacts.setQuery.mockReset()
+    readingArtifacts.setPage.mockReset()
     scrollTo.mockReset()
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
       configurable: true,
@@ -83,6 +100,7 @@ describe('AI 面板视图返回', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo
   })
@@ -122,5 +140,42 @@ describe('AI 面板视图返回', () => {
     expect(screen.getByText('匿名成果正文')).toHaveClass('text-caption', 'leading-relaxed')
     expect(screen.getByTitle('打开 note.md:2-4')).toHaveTextContent('note.md / 章节A / L2-4')
     expect(screen.getByRole('link', { name: /匿名网页/ })).toHaveAttribute('href', 'https://example.com/anonymous')
+  })
+
+  it('搜索输入短暂防抖后才更新查询条件，并显示服务端总数与分页', () => {
+    vi.useFakeTimers()
+    readingArtifacts.artifacts = [artifactFixture]
+    readingArtifacts.page = 2
+    readingArtifacts.total = 41
+    render(<AiPanel />)
+    fireEvent.click(screen.getByTitle('阅读成果'))
+
+    const input = screen.getByLabelText('搜索阅读成果')
+    fireEvent.change(input, { target: { value: '匿名' } })
+    expect(readingArtifacts.setQuery).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(179)
+    expect(readingArtifacts.setQuery).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(readingArtifacts.setQuery).toHaveBeenCalledWith('匿名')
+    expect(screen.getByText('41 条')).toBeInTheDocument()
+    expect(screen.getByText('第 2 / 3 页')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(readingArtifacts.setPage).toHaveBeenCalledWith(3)
+  })
+
+  it('区分尚无成果和当前条件无匹配结果', () => {
+    const first = render(<AiPanel />)
+    readingArtifacts.artifacts = []
+    readingArtifacts.total = 0
+    fireEvent.click(screen.getByTitle('阅读成果'))
+    expect(screen.getByText('还没有阅读成果')).toBeInTheDocument()
+
+    first.unmount()
+    readingArtifacts.filter = 'summary'
+    const second = render(<AiPanel />)
+    fireEvent.click(screen.getByTitle('阅读成果'))
+    expect(screen.getByText('当前条件无匹配结果')).toBeInTheDocument()
+    second.unmount()
   })
 })

@@ -102,7 +102,13 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
   const artifacts = useReadingArtifactsStore((s) => s.artifacts)
   const artifactsLoading = useReadingArtifactsStore((s) => s.loading)
   const artifactFilter = useReadingArtifactsStore((s) => s.filter)
+  const artifactQuery = useReadingArtifactsStore((s) => s.query)
+  const artifactPage = useReadingArtifactsStore((s) => s.page)
+  const artifactPageSize = useReadingArtifactsStore((s) => s.pageSize)
+  const artifactTotal = useReadingArtifactsStore((s) => s.total)
   const setArtifactFilter = useReadingArtifactsStore((s) => s.setFilter)
+  const setArtifactQuery = useReadingArtifactsStore((s) => s.setQuery)
+  const setArtifactPage = useReadingArtifactsStore((s) => s.setPage)
   const loadArtifacts = useReadingArtifactsStore((s) => s.loadArtifacts)
   const deleteArtifact = useReadingArtifactsStore((s) => s.deleteArtifact)
   const saveArtifactFromMessage = useReadingArtifactsStore((s) => s.saveArtifactFromMessage)
@@ -111,9 +117,9 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
 
   useEffect(() => {
     if (panelView === 'artifacts') {
-      loadArtifacts()
+      void loadArtifacts()
     }
-  }, [panelView, loadArtifacts])
+  }, [panelView, artifactFilter, artifactQuery, artifactPage, loadArtifacts])
 
   useEffect(() => {
     if (panelView !== 'chat' || !shouldScrollAfterReturnRef.current) return
@@ -621,7 +627,13 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
             artifacts={artifacts}
             loading={artifactsLoading}
             filter={artifactFilter}
+            query={artifactQuery}
+            page={artifactPage}
+            pageSize={artifactPageSize}
+            total={artifactTotal}
             onFilterChange={setArtifactFilter}
+            onQueryChange={setArtifactQuery}
+            onPageChange={setArtifactPage}
             onDelete={deleteArtifact}
             onOpenSource={handleOpenRagSource}
             onOpenArtifactSource={handleOpenArtifactSource}
@@ -943,11 +955,19 @@ const ARTIFACT_FILTER_OPTIONS: Array<{ value: ReadingArtifactFilter; label: stri
   { value: 'note', label: '笔记' },
 ]
 
+const READING_ARTIFACT_SEARCH_DEBOUNCE_MS = 180
+
 function ReadingArtifactsPanel({
   artifacts,
   loading,
   filter,
+  query,
+  page,
+  pageSize,
+  total,
   onFilterChange,
+  onQueryChange,
+  onPageChange,
   onDelete,
   onOpenSource,
   onOpenArtifactSource,
@@ -957,17 +977,61 @@ function ReadingArtifactsPanel({
   artifacts: ReadingArtifact[]
   loading: boolean
   filter: ReadingArtifactFilter
+  query: string
+  page: number
+  pageSize: number
+  total: number
   onFilterChange: (filter: ReadingArtifactFilter) => void
+  onQueryChange: (query: string) => void
+  onPageChange: (page: number) => void
   onDelete: (id: string) => void | Promise<void>
   onOpenSource: (source: { filePath: string; startLine: number; endLine: number }) => void | Promise<void>
   onOpenArtifactSource: (artifact: ReadingArtifact) => void | Promise<void>
   anchorStatuses: Record<string, SourceAnchorStatus>
   onCheckAnchor: (artifact: ReadingArtifact) => void | Promise<void>
 }) {
-  const visible = filter === 'all' ? artifacts : artifacts.filter((a) => a.type === filter)
+  const [searchInput, setSearchInput] = useState(query)
+  const searchDebounceRef = useRef<number | null>(null)
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const hasNoResults = total === 0
+  const hasNoArtifacts = hasNoResults && filter === 'all' && !query.trim()
+
+  useEffect(() => {
+    setSearchInput(query)
+  }, [query])
+
+  useEffect(() => () => {
+    if (searchDebounceRef.current !== null) {
+      window.clearTimeout(searchDebounceRef.current)
+    }
+  }, [])
+
+  const handleSearchChange = (value: string) => {
+    setSearchInput(value)
+    if (searchDebounceRef.current !== null) {
+      window.clearTimeout(searchDebounceRef.current)
+    }
+    searchDebounceRef.current = window.setTimeout(() => {
+      searchDebounceRef.current = null
+      onQueryChange(value)
+    }, READING_ARTIFACT_SEARCH_DEBOUNCE_MS)
+  }
 
   return (
     <div className="p-3 space-y-3 animate-fadeIn">
+      <div className="flex items-center gap-2">
+        <label className="sr-only" htmlFor="reading-artifact-search">搜索阅读成果</label>
+        <input
+          id="reading-artifact-search"
+          type="search"
+          value={searchInput}
+          onChange={(event) => handleSearchChange(event.target.value)}
+          placeholder="搜索阅读成果"
+          className="min-w-0 flex-1 rounded-lg border border-gm-border bg-gm-surface px-2.5 py-1.5 text-caption text-gm-text outline-none transition-colors placeholder:text-gm-text-disabled focus:border-gm-primary"
+        />
+        <span className="shrink-0 text-micro text-gm-text-tertiary">{total} 条</span>
+      </div>
+
       <div className="flex items-center gap-1.5 flex-wrap">
         {ARTIFACT_FILTER_OPTIONS.map((option) => (
           <button
@@ -983,19 +1047,21 @@ function ReadingArtifactsPanel({
             {option.label}
           </button>
         ))}
-        <span className="ml-auto text-micro text-gm-text-tertiary">{visible.length} 条</span>
+        {loading && <span className="ml-auto text-micro text-gm-text-tertiary">更新中…</span>}
       </div>
 
-      {loading ? (
+      {loading && artifacts.length === 0 ? (
         <div className="text-center text-caption text-gm-text-tertiary py-8">加载中...</div>
-      ) : visible.length === 0 ? (
+      ) : hasNoResults ? (
         <div className="text-center text-caption text-gm-text-tertiary py-12">
-          <p className="font-bold text-gm-text-secondary mb-1">还没有阅读成果</p>
-          <p>在 AI 回答上点击「摘要 / 问题集 / 批注 / 卡片 / 笔记」即可保存</p>
+          <p className="font-bold text-gm-text-secondary mb-1">
+            {hasNoArtifacts ? '还没有阅读成果' : '当前条件无匹配结果'}
+          </p>
+          <p>{hasNoArtifacts ? '在 AI 回答上点击「摘要 / 问题集 / 批注 / 卡片 / 笔记」即可保存' : '请尝试更换搜索词或筛选条件'}</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {visible.map((artifact) => (
+          {artifacts.map((artifact) => (
             <ReadingArtifactCard
               key={artifact.id}
               artifact={artifact}
@@ -1006,6 +1072,30 @@ function ReadingArtifactsPanel({
               onCheckAnchor={onCheckAnchor}
             />
           ))}
+        </div>
+      )}
+
+      {total > 0 && (
+        <div className="flex items-center gap-2 border-t border-gm-border-subtle pt-2 text-micro text-gm-text-tertiary">
+          <span>第 {page} / {totalPages} 页</span>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onPageChange(page - 1)}
+              disabled={page <= 1 || loading}
+              className="rounded-md border border-gm-border px-2 py-1 transition-colors hover:bg-gm-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => onPageChange(page + 1)}
+              disabled={page >= totalPages || loading}
+              className="rounded-md border border-gm-border px-2 py-1 transition-colors hover:bg-gm-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              下一页
+            </button>
+          </div>
         </div>
       )}
     </div>
