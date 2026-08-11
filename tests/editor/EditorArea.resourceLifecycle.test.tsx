@@ -154,6 +154,12 @@ function resourceBalance(resource: 'editor' | 'left-preview' | 'right-preview' |
   return countResourceEvent('model-create', resource) - countResourceEvent('model-dispose', resource)
 }
 
+async function flushAsyncCommit() {
+  await act(async () => {
+    await vi.dynamicImportSettled()
+  })
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'] })
   vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
@@ -333,6 +339,7 @@ describe('Right preview pending/conflict', () => {
     // Click outside to trigger submit
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
+    await flushAsyncCommit()
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(1)
 
     // Switch away from dual-preview (draft is pending, so right preview should stay)
@@ -371,6 +378,7 @@ describe('Right preview pending/conflict', () => {
     // Click outside to trigger submit
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
+    await flushAsyncCommit()
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(1)
 
     // Switch away from dual-preview (memory policy = immediate release)
@@ -388,6 +396,7 @@ describe('Right preview pending/conflict', () => {
     // Click outside again to re-submit
     fireEvent.pointerDown(document.body, { pointerId: 3, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(500))
+    await flushAsyncCommit()
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(2)
 
     // After successful commit, draft ends and release should happen
@@ -414,6 +423,7 @@ describe('Right preview pending/conflict', () => {
     altClickRightBlock(container, 0)
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
+    await flushAsyncCommit()
 
     // Switch away (memory = immediate)
     act(() => useEditorStore.getState().setViewMode('preview'))

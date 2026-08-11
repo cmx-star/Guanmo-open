@@ -1381,7 +1381,7 @@ export function EditorArea() {
     }
     // 动态导入：markdownBlocks 仅在块提交时需要，避免进入入口 chunk（阶段 4 定位重构后 bundle budget）
     const { replaceMarkdownBlock } = await import('@/services/markdownBlocks')
-    const result = replaceMarkdownBlock(tab.content, request.block, request.draft)
+    const result = await replaceMarkdownBlock(tab.content, request.block, request.draft)
     if (result.status === 'conflict') {
       toast.warning('该 Markdown 块已被其他操作修改，当前草稿未覆盖原文。')
       return result
