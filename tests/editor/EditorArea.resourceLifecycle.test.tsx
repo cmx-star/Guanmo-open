@@ -154,9 +154,12 @@ function resourceBalance(resource: 'editor' | 'left-preview' | 'right-preview' |
   return countResourceEvent('model-create', resource) - countResourceEvent('model-dispose', resource)
 }
 
-async function flushAsyncCommit() {
+async function waitForAsyncCommit(expectedCalls: number) {
   await act(async () => {
     await vi.dynamicImportSettled()
+    await vi.waitFor(() => {
+      expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(expectedCalls)
+    })
   })
 }
 
@@ -339,7 +342,7 @@ describe('Right preview pending/conflict', () => {
     // Click outside to trigger submit
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
-    await flushAsyncCommit()
+    await waitForAsyncCommit(1)
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(1)
 
     // Switch away from dual-preview (draft is pending, so right preview should stay)
@@ -378,8 +381,13 @@ describe('Right preview pending/conflict', () => {
     // Click outside to trigger submit
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
-    await flushAsyncCommit()
+    await waitForAsyncCommit(1)
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('.gm-inline-markdown-editor--conflict')).not.toBeNull()
+      })
+    })
 
     // Switch away from dual-preview (memory policy = immediate release)
     act(() => useEditorStore.getState().setViewMode('preview'))
@@ -396,7 +404,7 @@ describe('Right preview pending/conflict', () => {
     // Click outside again to re-submit
     fireEvent.pointerDown(document.body, { pointerId: 3, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(500))
-    await flushAsyncCommit()
+    await waitForAsyncCommit(2)
     expect(replaceMarkdownBlockMock).toHaveBeenCalledTimes(2)
 
     // After successful commit, draft ends and release should happen
@@ -423,7 +431,7 @@ describe('Right preview pending/conflict', () => {
     altClickRightBlock(container, 0)
     fireEvent.pointerDown(document.body, { pointerId: 2, clientX: 500, clientY: 500 })
     await act(() => vi.advanceTimersByTime(100))
-    await flushAsyncCommit()
+    await waitForAsyncCommit(1)
 
     // Switch away (memory = immediate)
     act(() => useEditorStore.getState().setViewMode('preview'))
