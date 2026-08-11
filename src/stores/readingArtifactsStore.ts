@@ -10,12 +10,15 @@ import {
   type ReadingArtifact,
   type ReadingArtifactType,
   type ReadingArtifactSourceAnchor,
+  type ReadingArtifactReference,
   type SourceAnchorStatus,
+  buildReadingArtifactReferences,
   persistReadingArtifact,
   loadReadingArtifacts,
   deleteReadingArtifact,
   checkReadingArtifactSource,
   mergeReadingArtifactQuestionMetadata,
+  mergeReadingArtifactReferencesMetadata,
 } from '@/services/database/readingArtifacts'
 import { loadDocumentContentHashByPath } from '@/services/database/persistence'
 
@@ -51,12 +54,12 @@ export interface SaveFromMessageInput {
   structuredContent?: unknown | null
 }
 
-function buildAnchorFromSources(
-  sources: ChatMessageSource[] | undefined,
+function buildAnchorFromReferences(
+  references: readonly ReadingArtifactReference[],
   contextScope: ReadingScope | undefined,
   messageId: string | undefined,
 ): { source: ReadingArtifactSourceAnchor | null; contentHashPromise: Promise<string | undefined> } {
-  const localSource = sources?.find((s): s is Extract<ChatMessageSource, { kind?: 'local' }> => s.kind !== 'web')
+  const localSource = references.find((reference) => reference.kind === 'local')
   if (!localSource) {
     return { source: null, contentHashPromise: Promise.resolve(undefined) }
   }
@@ -118,8 +121,9 @@ export const useReadingArtifactsStore = create<ReadingArtifactsState>((set, get)
   },
 
   saveArtifactFromMessage: async (input) => {
-    const { source, contentHashPromise } = buildAnchorFromSources(
-      input.sources,
+    const references = buildReadingArtifactReferences(input.sources)
+    const { source, contentHashPromise } = buildAnchorFromReferences(
+      references,
       input.contextScope,
       input.messageId,
     )
@@ -132,7 +136,10 @@ export const useReadingArtifactsStore = create<ReadingArtifactsState>((set, get)
       type: input.type,
       title: input.title,
       content: input.content,
-      structuredContent: mergeReadingArtifactQuestionMetadata(input.structuredContent, input.question),
+      structuredContent: mergeReadingArtifactQuestionMetadata(
+        mergeReadingArtifactReferencesMetadata(input.structuredContent, references),
+        input.question,
+      ),
       source,
     })
     await get().loadArtifacts()

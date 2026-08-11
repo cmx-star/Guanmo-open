@@ -28,11 +28,13 @@ import { saveAssistantMessageAsMarkdown } from '@/services/assistantMessageExpor
 import { useReadingArtifactsStore, type ReadingArtifactFilter } from '@/stores/readingArtifactsStore'
 import {
   type ReadingArtifact,
+  type ReadingArtifactReference,
   type ReadingArtifactType,
   type SourceAnchorStatus,
   type AnnotationStructuredContent,
   getAnnotationStructuredContent,
   getReadingArtifactQuestion,
+  getReadingArtifactReferences,
   loadReadingArtifactById,
   resolveAnnotationPosition,
 } from '@/services/database/readingArtifacts'
@@ -1037,6 +1039,7 @@ function ReadingArtifactCard({
     ? getAnnotationStructuredContent(artifact)
     : null
   const question = getReadingArtifactQuestion(artifact)
+  const references = getReadingArtifactReferences(artifact)
 
   const sourceLabel = artifact.source?.fileName
     ? [
@@ -1115,6 +1118,9 @@ function ReadingArtifactCard({
               <div className="mb-1.5 text-micro font-bold text-gm-text-tertiary">成果内容</div>
               <AssistantMarkdown content={artifact.content} compact />
             </div>
+          )}
+          {references.length > 0 && (
+            <ArtifactReferences references={references} onOpenSource={onOpenSource} />
           )}
           {artifact.source?.quote && !annotation && (
             <div className="rounded-lg bg-gm-surface-hover px-2.5 py-2">
@@ -1227,6 +1233,60 @@ function AnnotationDetail({
       </div>
     </div>
   )
+}
+
+function ArtifactReferences({
+  references,
+  onOpenSource,
+}: {
+  references: readonly ReadingArtifactReference[]
+  onOpenSource: (source: { filePath: string; startLine: number; endLine: number }) => void | Promise<void>
+}) {
+  return (
+    <div className="rounded-lg bg-gm-surface-hover px-2.5 py-2.5">
+      <div className="mb-1.5 text-micro font-bold text-gm-text-tertiary">参考来源</div>
+      <div className="space-y-1">
+        {references.map((reference, index) => (
+          reference.kind === 'web' ? (
+            <a
+              key={`${reference.url}-${index}`}
+              href={reference.url}
+              target="_blank"
+              rel="noreferrer"
+              className="block w-full rounded-lg px-2 py-1 text-left text-micro leading-relaxed text-gm-text-secondary hover:bg-gm-surface hover:text-gm-primary"
+              title={reference.url}
+            >
+              <span className="mr-1 rounded border border-gm-border px-1 text-[10px] font-bold text-gm-text-tertiary">Web</span>
+              <span className="font-bold">{reference.title}</span>
+              {(reference.siteName || reference.publishedAt) && (
+                <span> / {[reference.siteName, reference.publishedAt].filter(Boolean).join(' / ')}</span>
+              )}
+            </a>
+          ) : (
+            <button
+              key={`${reference.filePath}-${reference.startLine}-${reference.endLine}-${index}`}
+              type="button"
+              onClick={() => onOpenSource(reference)}
+              className="block w-full rounded-lg px-2 py-1 text-left text-micro leading-relaxed text-gm-text-secondary hover:bg-gm-surface hover:text-gm-primary"
+              title={`打开 ${reference.fileName}:${reference.startLine}-${reference.endLine}`}
+            >
+              <span className="mr-1 rounded border border-gm-border px-1 text-[10px] font-bold text-gm-text-tertiary">Local</span>
+              <span className="font-bold">{reference.fileName}</span>
+              {formatArtifactReferenceHeading(reference) && (
+                <span> / {formatArtifactReferenceHeading(reference)}</span>
+              )}
+              <span> / L{reference.startLine}-{reference.endLine}</span>
+            </button>
+          )
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function formatArtifactReferenceHeading(reference: Extract<ReadingArtifactReference, { kind: 'local' }>): string {
+  if (reference.titlePath?.length) return reference.titlePath.join(' / ')
+  return reference.heading || ''
 }
 
 function AgentTimeline({ timeline }: { timeline: TimelineItem[] }) {

@@ -3,15 +3,19 @@ import {
   decodeReadingArtifact,
   checkReadingArtifactSource,
   decodeAnnotationStructuredContent,
+  buildReadingArtifactReferences,
   getAnnotationStructuredContent,
   getReadingArtifactQuestion,
+  getReadingArtifactReferences,
   mergeReadingArtifactQuestionMetadata,
+  mergeReadingArtifactReferencesMetadata,
   resolveAnnotationPosition,
   computeAnnotationFingerprint,
   findMarkdownBlockByOffset,
   findMarkdownBlockByQuote,
   type ReadingArtifactRow,
 } from '@/services/database/readingArtifacts'
+import type { ChatMessageSource } from '@/services/ai/types'
 import { parseMarkdownBlocks } from '@/services/markdownBlocks'
 
 function baseRow(overrides: Partial<ReadingArtifactRow> = {}): ReadingArtifactRow {
@@ -138,6 +142,97 @@ describe('阅读成果问题元数据', () => {
       }))
       expect(getReadingArtifactQuestion(artifact)).toBe('匿名问题')
     }
+  })
+})
+
+describe('阅读成果参考来源', () => {
+  const localSource: ChatMessageSource = {
+    kind: 'local',
+    filePath: 'C:\\anonymous\\note.md',
+    fileName: 'note.md',
+    titlePath: ['章节A'],
+    heading: '章节A',
+    startLine: 2,
+    endLine: 4,
+  }
+  const webSource: ChatMessageSource = {
+    kind: 'web',
+    title: '匿名网页',
+    url: 'https://example.com/anonymous',
+    siteName: 'Example',
+    publishedAt: '2026-08-10',
+  }
+
+  it('按原顺序保存本地与 Web 来源，并按规范化路径/行号和 URL 去重', () => {
+    const references = buildReadingArtifactReferences([
+      localSource,
+      { ...localSource, filePath: 'c:/ANONYMOUS/note.md' },
+      { ...localSource, startLine: 8, endLine: 9 },
+      webSource,
+      { ...webSource, title: '重复标题' },
+    ])
+
+    expect(references).toEqual([
+      {
+        kind: 'local',
+        filePath: 'C:\\anonymous\\note.md',
+        fileName: 'note.md',
+        titlePath: ['章节A'],
+        heading: '章节A',
+        startLine: 2,
+        endLine: 4,
+      },
+      expect.objectContaining({ kind: 'local', startLine: 8, endLine: 9 }),
+      {
+        kind: 'web',
+        title: '匿名网页',
+        url: 'https://example.com/anonymous',
+        siteName: 'Example',
+        publishedAt: '2026-08-10',
+      },
+    ])
+  })
+
+  it('四类成果均可合并来源，且原问题与批注字段不丢失', () => {
+    const references = buildReadingArtifactReferences([localSource, webSource])
+    for (const type of ['summary', 'question_set', 'annotation', 'note'] as const) {
+      const initial = type === 'annotation'
+        ? { quote: '原文', note: '批注正文' }
+        : { points: ['要点A'] }
+      const structured = mergeReadingArtifactQuestionMetadata(
+        mergeReadingArtifactReferencesMetadata(initial, references),
+        '匿名问题',
+      )
+      const artifact = decodeReadingArtifact(baseRow({
+        type,
+        structured_content: JSON.stringify(structured),
+      }))
+
+      expect(getReadingArtifactQuestion(artifact)).toBe('匿名问题')
+      expect(getReadingArtifactReferences(artifact)).toEqual(references)
+      if (type === 'annotation') {
+        expect(getAnnotationStructuredContent(artifact)).toMatchObject({ quote: '原文', note: '批注正文' })
+      } else {
+        expect(artifact.structuredContent).toMatchObject({ points: ['要点A'] })
+      }
+    }
+  })
+
+  it('无来源写入空数组，旧成果或损坏来源项安全降级', () => {
+    expect(mergeReadingArtifactReferencesMetadata(null, [])).toEqual({ references: [] })
+    expect(getReadingArtifactReferences(decodeReadingArtifact(baseRow()))).toEqual([])
+    const artifact = decodeReadingArtifact(baseRow({
+      structured_content: JSON.stringify({
+        references: [
+          null,
+          { kind: 'local', filePath: '', fileName: 'bad.md', startLine: 0, endLine: 0 },
+          { kind: 'web', title: '有效来源', url: 'https://example.com/valid' },
+        ],
+      }),
+    }))
+    expect(getReadingArtifactReferences(artifact)).toEqual([
+      { kind: 'web', title: '有效来源', url: 'https://example.com/valid' },
+    ])
   })
 })
 

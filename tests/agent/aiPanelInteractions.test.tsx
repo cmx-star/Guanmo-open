@@ -22,6 +22,23 @@ const readingArtifacts = vi.hoisted(() => ({
     content: '匿名成果正文',
     structuredContent: {
       question: '这是一个较长的原问题，用来验证阅读成果展开后默认只显示三行内容，并且用户可以根据需要继续展开查看完整问题。为了确保测试稳定，这段问题会明显超过默认收起阈值。',
+      references: [
+        {
+          kind: 'local' as const,
+          filePath: 'C:/anonymous/note.md',
+          fileName: 'note.md',
+          titlePath: ['章节A'],
+          startLine: 2,
+          endLine: 4,
+        },
+        {
+          kind: 'web' as const,
+          title: '匿名网页',
+          url: 'https://example.com/anonymous',
+          siteName: 'Example',
+          publishedAt: '2026-08-10',
+        },
+      ],
     },
     source: null,
     status: 'active' as const,
@@ -94,6 +111,7 @@ describe('AI 面板视图返回', () => {
 
     expect(screen.getByText('原问题')).toBeInTheDocument()
     expect(screen.getByText('成果内容')).toBeInTheDocument()
+    expect(screen.getByText('参考来源')).toBeInTheDocument()
     expect(screen.getByText('原问题').parentElement).toHaveClass('bg-gm-primary/5')
     expect(screen.getByText('成果内容').parentElement).toHaveClass('bg-gm-canvas')
     const question = screen.getByText(/这是一个较长的原问题/)
@@ -102,5 +120,7 @@ describe('AI 面板视图返回', () => {
     expect(question.style.webkitLineClamp).toBe('')
     expect(screen.getByRole('button', { name: '收起问题' })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('匿名成果正文')).toHaveClass('text-caption', 'leading-relaxed')
+    expect(screen.getByTitle('打开 note.md:2-4')).toHaveTextContent('note.md / 章节A / L2-4')
+    expect(screen.getByRole('link', { name: /匿名网页/ })).toHaveAttribute('href', 'https://example.com/anonymous')
   })
 })
