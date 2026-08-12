@@ -38,6 +38,28 @@ export interface SearchResult {
   vectorScore?: number
 }
 
+export interface RAGContextSource {
+  result: SearchResult
+  sourceNumber: number
+}
+
+export interface SkippedRAGContextSource extends RAGContextSource {
+  reason: 'budget_exceeded'
+}
+
+export interface RAGContextCoverage {
+  requested: number
+  included: number
+  skipped: number
+}
+
+export interface RAGContextBuildResult {
+  text: string
+  includedSources: RAGContextSource[]
+  skippedSources: SkippedRAGContextSource[]
+  coverage: RAGContextCoverage
+}
+
 export interface Memory {
   id: string
   content: string

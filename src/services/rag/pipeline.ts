@@ -1,4 +1,4 @@
-import type { Document, Chunk, SearchResult, RAGConfig } from './types'
+import type { Document, Chunk, SearchResult, RAGConfig, RAGContextBuildResult } from './types'
 import { chunkMarkdown } from './chunker'
 import { createExactContentHash } from './contentHash'
 import { createEmbeddingInputHash, EMBEDDING_PREPROCESS_VERSION, getEmbeddingInput } from './embeddingInput'
@@ -493,41 +493,96 @@ export async function getRagStatsAsync(): Promise<RAGStats> {
   }
 }
 
+const RAG_CONTEXT_PREFIX = '【知识库检索结果】'
+const RAG_CONTEXT_SEPARATOR = '\n\n---\n\n'
+
+function formatContextSource(r: SearchResult, sourceNumber: number): string {
+  const source = r.document.title || r.document.filePath
+  const titlePath = r.chunk.titlePath?.length ? r.chunk.titlePath.join(' > ') : r.chunk.heading || '未命名位置'
+  return [
+    `[知识来源 ${sourceNumber}]`,
+    `来源：${source}`,
+    `文件：${r.document.filePath}`,
+    `位置：${titlePath}`,
+    `行号：${r.chunk.startLine}-${r.chunk.endLine}`,
+    `检索：${r.retrievalMode}，相关度 ${r.score.toFixed(3)}`,
+    '内容：',
+    r.chunk.content,
+  ].join('\n')
+}
+
+function formatContextOmission(skippedSourceNumbers: number[]): string {
+  return `【上下文覆盖】已跳过 ${skippedSourceNumbers.length} 个超出预算的来源：${skippedSourceNumbers.join('、')}`
+}
+
+function joinContextParts(parts: string[]): string {
+  return parts.length > 0 ? `${RAG_CONTEXT_PREFIX}\n${parts.join(RAG_CONTEXT_SEPARATOR)}` : ''
+}
+
+/**
+ * Pack complete search-result chunks into a character budget.
+ */
+export function buildContextResult(results: SearchResult[], maxChars = 6000): RAGContextBuildResult {
+  const budget = Math.max(0, Math.floor(maxChars))
+  const includedSources: RAGContextBuildResult['includedSources'] = []
+  let skippedSources: RAGContextBuildResult['skippedSources'] = []
+
+  if (results.length === 0) {
+    return {
+      text: '',
+      includedSources,
+      skippedSources,
+      coverage: { requested: 0, included: 0, skipped: 0 },
+    }
+  }
+
+  for (const [index, result] of results.entries()) {
+    const sourceNumber = index + 1
+    const candidate = { result, sourceNumber }
+    const nextIncluded = [...includedSources, candidate]
+    const nextSkippedNumbers = skippedSources.map((source) => source.sourceNumber)
+    const parts = nextIncluded.map((source) => formatContextSource(source.result, source.sourceNumber))
+    if (nextSkippedNumbers.length > 0) parts.push(formatContextOmission(nextSkippedNumbers))
+
+    if (joinContextParts(parts).length <= budget) {
+      includedSources.push(candidate)
+    } else {
+      skippedSources.push({ ...candidate, reason: 'budget_exceeded' })
+    }
+  }
+
+  const contextParts = includedSources.map((source) => formatContextSource(source.result, source.sourceNumber))
+  if (skippedSources.length > 0) {
+    contextParts.push(formatContextOmission(skippedSources.map((source) => source.sourceNumber)))
+  }
+  let text = joinContextParts(contextParts)
+
+  if (text.length > budget) {
+    text = ''
+    skippedSources = results.map((result, index) => ({
+      result,
+      sourceNumber: index + 1,
+      reason: 'budget_exceeded',
+    }))
+  }
+
+  return {
+    text,
+    includedSources: text ? includedSources : [],
+    skippedSources,
+    coverage: {
+      requested: results.length,
+      included: text ? includedSources.length : 0,
+      skipped: skippedSources.length,
+    },
+  }
+}
+
 /**
  * Build context string from search results for AI prompt.
  */
 export function buildContext(results: SearchResult[], maxChars = 6000): string {
-  if (results.length === 0) return ''
-
-  const parts: string[] = []
-  let usedChars = 0
-
-  for (const [i, r] of results.entries()) {
-    const source = r.document.title || r.document.filePath
-    const titlePath = r.chunk.titlePath?.length ? r.chunk.titlePath.join(' > ') : r.chunk.heading || '未命名位置'
-    const part = [
-      `[知识来源 ${i + 1}]`,
-      `来源：${source}`,
-      `文件：${r.document.filePath}`,
-      `位置：${titlePath}`,
-      `行号：${r.chunk.startLine}-${r.chunk.endLine}`,
-      `检索：${r.retrievalMode}，相关度 ${r.score.toFixed(3)}`,
-      '内容：',
-      r.chunk.content,
-    ].join('\n')
-
-    const remaining = maxChars - usedChars
-    if (remaining <= 240) break
-    if (part.length > remaining) {
-      parts.push(`${part.slice(0, remaining)}\n...（知识库上下文已截断）`)
-      break
-    }
-    parts.push(part)
-    usedChars += part.length
-  }
-
-  if (parts.length === 0) return ''
-  return `【知识库检索结果】\n${parts.join('\n\n---\n\n')}`
+  return buildContextResult(results, maxChars).text
 }
 
 /**

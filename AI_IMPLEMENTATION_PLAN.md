@@ -5,14 +5,14 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 3｜Agent 单工具超时
+- 当前阶段：阶段 5｜Embedding 超长输入兜底
 - 阶段状态：未开始
-- 上次执行结果：RAG-02 已完成；失效的 `chunkSize/chunkOverlap` 配置、类型和透传已删除，语义分块边界测试已补齐
-- 验证结果：语义分块测试 8/8、Agent parser、typecheck 通过；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
-- 本阶段剩余：复现并修复 Agent 单工具双计时器，覆盖成功、失败、取消和超时清理
-- 本阶段允许修改：Agent executor、Agent 执行预算直接测试、本文件
+- 上次执行结果：RAG-03 已完成；RAG 上下文按字符预算原子装入完整 Chunk，过长候选跳过后继续尝试更短候选，直接聊天来源只保留实际装入项
+- 验证结果：RAG 上下文测试 7/7、typecheck 通过；定向 ESLint 0 error（1 个既有 warning）；`git diff --check` 通过
+- 本阶段剩余：冻结父 Chunk、Embedding 子块、向量聚合、行号映射与旧向量兼容契约，再实现超长输入安全兜底
+- 本阶段允许修改：语义分块/Embedding 输入、pipeline、RAG 持久化与直接测试；确有必要时最小扩展数据库 Schema 和 Rust 解码
 - 阻塞问题：无
-- 下一阶段：阶段 4｜RAG 完整语义块装箱
+- 下一阶段：阶段 6｜统一模型上下文预算
 - Git 状态：分支 `codex/defect-capability-fixes`；未提交、未推送
 
 ## 项目目标
@@ -192,45 +192,54 @@
 
 ### 目标
 
-只完成 AGENT-01：将单个工具执行中的 abort 定时器和 `Promise.race` reject 定时器统一为一个可清理的超时控制，保留父会话取消信号、工具进度和写入确认语义。
+只完成 RAG-04：在保留展示用父 Chunk 语义完整性的前提下，为超长 Embedding 输入建立安全子块、父块映射和有限失败降级，并保持旧向量可读。
 
 ### 允许修改
 
-- `src/services/agent/executor.ts`
-- `tests/agent/agentExecutionBudget.test.ts`
+- `src/services/rag/chunker.ts`
+- `src/services/rag/embeddingInput.ts`
+- `src/services/rag/pipeline.ts`
+- `src/services/rag/types.ts`
+- `src/services/rag/reconciler.ts`（仅在父子映射或渐进重建确有必要时）
+- `src/services/database/**`（仅在持久化契约确有必要时）
+- `src-tauri/**`（仅在 Schema 或 Rust 解码确有必要时）
+- `tests/rag/**`（仅限直接相关测试）
 - `AI_IMPLEMENTATION_PLAN.md`
 
 ### 实施任务
 
-1. 使用 fake timers 或可观察计时器建立旧实现会留下第二个 timeout 的失败复现。
-2. 设计单一 `withTimeout` 边界：超时先 abort 子工具，再以明确状态结束；工具提前完成时立即清理定时器。
-3. 保留父 `AbortSignal` 转发，并在所有终态移除监听器。
-4. 覆盖成功、工具错误、父会话取消、超时及迟到结果隔离；确认必须确认的写入工具行为不变。
-5. 根据真实检查结果更新顶部状态与阶段历史；阶段完成后将当前阶段切换为阶段 4。
+1. 先读取当前 Embedding 输入、缓存键、持久化 Schema 与 Rust 解码链路，冻结父 Chunk、Embedding 子块、向量聚合、准确行号和旧向量兼容契约。
+2. 用匿名直接测试复现超长代码、公式、HTML 和无安全边界长文本导致单条 Embedding 失败时阻断整篇入库的问题。
+3. 以最小边界生成安全 Embedding 子块，保留父 Chunk 作为展示与检索结果单位，并确保子块结果可映射回原文件和准确行号。
+4. 为批量失败后的逐条降级建立有限重试与匿名错误定位；不得记录正文，也不得让单个超长输入阻断其他 Chunk。
+5. 保持旧向量、旧预处理版本和旧索引可读，按现有版本化机制渐进重建；根据真实检查结果更新顶部状态与阶段历史。
 
 ### 验收标准
 
-- [ ] 单个工具执行只创建一个超时计时器，提前完成后立即清理。
-- [ ] 成功、工具错误、父会话取消和超时均清理计时器与监听器。
-- [ ] timeout、cancelled、tool_error 在执行结果中可区分，不统一伪装为普通错误。
-- [ ] 超时后的迟到结果不能覆盖当前 Agent 消息。
-- [ ] 修改确认与工具调用预算语义保持不变。
-- [ ] Agent 执行预算测试、typecheck、定向 ESLint 和 diff 检查通过。
+- [ ] 超长代码、公式、HTML 和无安全边界长文本不会阻断整篇文档入库。
+- [ ] 展示与检索仍返回完整父 Chunk，Embedding 子块可映射回原文件和准确行号。
+- [ ] 单个子块失败只影响该输入，错误可定位但不记录正文，重试次数有界。
+- [ ] 旧向量和旧预处理版本继续可读，并通过现有版本化机制渐进重建。
+- [ ] 不修改检索排序、权重、展示 Chunk 语义或要求用户清库重建。
+- [ ] RAG index、相关 Schema/迁移测试、typecheck、定向 ESLint、必要 Rust 定向测试和 diff 检查通过。
 
 ### 检查命令
 
 ~~~powershell
-npx vitest run tests/agent/agentExecutionBudget.test.ts
+npm run test:rag-index
+npx vitest run tests/rag/semanticChunker.test.ts
+npm run test:runtime-schemas
 npm run typecheck
-npx eslint src/services/agent/executor.ts tests/agent/agentExecutionBudget.test.ts
-git diff --check -- AI_IMPLEMENTATION_PLAN.md src/services/agent/executor.ts tests/agent/agentExecutionBudget.test.ts
+npx eslint src/services/rag/chunker.ts src/services/rag/embeddingInput.ts src/services/rag/pipeline.ts src/services/rag/types.ts src/services/rag/reconciler.ts tests/rag
+git diff --check -- AI_IMPLEMENTATION_PLAN.md src/services/rag tests/rag
 ~~~
 
 ### 禁止事项
 
-- 不实现整次 Agent deadline、工具自动重试或 Rust HTTP 物理取消。
-- 不修改工具业务实现、路由、Prompt、调用预算或确认协议。
-- 不新增依赖，不重构整个 Agent executor。
+- 不实现标题路径增强、邻居扩展、模型级总预算或大型向量数据库。
+- 不修改检索排序、权重、阈值或展示用父 Chunk 语义。
+- 不清库、不重置配置、不要求用户重建内容；不破坏旧向量读取。
+- 不新增依赖，不重构整个 RAG pipeline 或持久化层。
 - 不修改或夹带已有无关未跟踪文件。
 - 不自动提交、推送、打 tag、创建 Release 或 PR。
 
@@ -248,6 +257,20 @@ git diff --check -- AI_IMPLEMENTATION_PLAN.md src/services/agent/executor.ts tes
 - 状态：已完成
 - 完成内容：删除 `RAGConfig`、默认值、pipeline 和 `chunkMarkdown` 中失效的 `chunkSize/chunkOverlap`；补充安全段落边界、无边界超长文本、列表和表格测试，保留代码/公式整体语义
 - 验证结果：`npx vitest run tests/rag/semanticChunker.test.ts` 8/8、`npm run test:agent-parser`、`npm run typecheck` 通过；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
+- 遗留问题：无
+
+### 阶段 3｜Agent 单工具超时
+
+- 状态：已完成
+- 完成内容：将 abort 与竞速 reject 的双计时器合并为一个可清理控制；超时先 abort 子工具，父取消可终止不响应 abort 的工具；执行结果区分 success、timeout、cancelled、tool_error，迟到结果不回写
+- 验证结果：`npx vitest run tests/agent/agentExecutionBudget.test.ts` 10/10、`npm run typecheck` 通过；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
+- 遗留问题：无
+
+### 阶段 4｜RAG 完整语义块装箱
+
+- 状态：已完成
+- 完成内容：新增结构化上下文装箱结果；按完整 Chunk 原子装入字符预算，跳过过长候选后继续尝试后续候选；固定前缀、来源头、分隔符和跳过提示全部计入预算；直接聊天来源与实际装入内容一致
+- 验证结果：`npx vitest run tests/rag/ragContext.test.ts` 7/7、`npm run typecheck` 通过；定向 ESLint 0 error（1 个既有 warning）；`git diff --check` 通过
 - 遗留问题：无
 
 ## 新窗口执行提示词

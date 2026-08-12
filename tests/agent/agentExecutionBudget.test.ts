@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AiProvider, ChatRequest, ChatResponse, StreamChunk } from '@/services/ai/types'
 
 const responseQueue: StreamChunk[][] = []
@@ -57,6 +57,17 @@ describe('Agent execution budget', () => {
     streamChat.mockClear()
     executeAnonymousRead.mockClear()
     executeAnonymousList.mockClear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    registerTool({
+      name: 'get_current_time',
+      description: '匿名只读工具',
+      parameters: [],
+      execute: executeAnonymousRead,
+    })
   })
 
   it('直接复用工具后的模型答案，不再请求第三次最终综合', async () => {
@@ -237,12 +248,114 @@ describe('Agent execution budget', () => {
     })
   })
 
+  it('工具提前成功时只创建一个超时计时器并立即清理', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const controller = new AbortController()
+    const removeEventListenerSpy = vi.spyOn(controller.signal, 'removeEventListener')
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
+      }],
+      [{ content: '匿名成功答案', done: true }],
+    )
+
+    const result = await runAgent({
+      query: '匿名成功请求',
+      candidateToolNames: ['get_current_time'],
+      config: { stepTimeout: 3210 },
+      signal: controller.signal,
+      streamEnabled: true,
+    })
+
+    const timeoutCallIndexes = setTimeoutSpy.mock.calls
+      .map(([, delay], index) => delay === 3210 ? index : -1)
+      .filter(index => index >= 0)
+    expect(timeoutCallIndexes).toHaveLength(1)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(setTimeoutSpy.mock.results[timeoutCallIndexes[0]]?.value)
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+    expect(result.answer).toBe('匿名成功答案')
+  })
+
+  it('工具错误形成 tool_error 结果并清理超时计时器', async () => {
+    registerTool({
+      name: 'get_current_time',
+      description: '匿名错误工具',
+      parameters: [],
+      execute: async () => { throw new Error('匿名工具失败') },
+    })
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const controller = new AbortController()
+    const removeEventListenerSpy = vi.spyOn(controller.signal, 'removeEventListener')
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
+      }],
+      [{ content: '匿名错误降级答案', done: true }],
+    )
+
+    const result = await runAgent({
+      query: '匿名错误请求',
+      candidateToolNames: ['get_current_time'],
+      signal: controller.signal,
+      streamEnabled: true,
+    })
+
+    expect(result.steps.some((step) => step.content === '工具执行出错: 匿名工具失败')).toBe(true)
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('父会话取消会结束不响应 abort 的工具并移除转发监听器', async () => {
+    const executeIgnoringAbort = vi.fn(async () => await new Promise<string>(() => undefined))
+    registerTool({
+      name: 'get_current_time',
+      description: '匿名取消工具',
+      parameters: [],
+      execute: executeIgnoringAbort,
+    })
+    responseQueue.push([{
+      content: '',
+      done: true,
+      toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
+    }])
+    const controller = new AbortController()
+    const removeEventListenerSpy = vi.spyOn(controller.signal, 'removeEventListener')
+
+    const pending = runAgent({
+      query: '匿名执行中取消请求',
+      candidateToolNames: ['get_current_time'],
+      signal: controller.signal,
+      streamEnabled: true,
+    })
+    while (executeIgnoringAbort.mock.calls.length === 0) await Promise.resolve()
+    controller.abort('anonymous_cancel')
+    const result = await pending
+
+    expect(result.reason).toBe('error')
+    expect(result.steps.some((step) => step.content === '工具执行已取消。')).toBe(true)
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
   it('工具超时后仍形成明确工具结果并稳定结束', async () => {
+    vi.useFakeTimers()
+    let resolveLate: ((value: string) => void) | undefined
+    let toolSignal: AbortSignal | undefined
+    const controller = new AbortController()
+    const removeEventListenerSpy = vi.spyOn(controller.signal, 'removeEventListener')
+    const executeLate = vi.fn(async (_args, context) => await new Promise<string>((resolve) => {
+      toolSignal = context.signal
+      resolveLate = resolve
+    }))
     registerTool({
       name: 'get_current_time',
       description: '匿名超时工具',
       parameters: [],
-      execute: async () => await new Promise<string>(() => undefined),
+      execute: executeLate,
     })
     responseQueue.push(
       [{
@@ -253,22 +366,29 @@ describe('Agent execution budget', () => {
       [{ content: '匿名超时降级答案', done: true }],
     )
 
-    const result = await runAgent({
+    const pending = runAgent({
       query: '匿名超时请求',
       candidateToolNames: ['get_current_time'],
       config: { stepTimeout: 5 },
+      signal: controller.signal,
       streamEnabled: true,
     })
+    while (executeLate.mock.calls.length === 0) await Promise.resolve()
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(5)
+    const result = await pending
 
     expect(result.reason).toBe('completed')
     expect(result.answer).toBe('匿名超时降级答案')
-    expect(result.steps.some((step) => step.content.includes('工具执行超时'))).toBe(true)
+    expect(result.steps.some((step) => step.content === '工具执行超时。')).toBe(true)
+    expect(toolSignal).toMatchObject({ aborted: true, reason: 'timeout' })
+    expect(vi.getTimerCount()).toBe(0)
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function))
 
-    registerTool({
-      name: 'get_current_time',
-      description: '匿名只读工具',
-      parameters: [],
-      execute: executeAnonymousRead,
-    })
+    const completedSteps = [...result.steps]
+    resolveLate?.('匿名迟到工具结果')
+    await Promise.resolve()
+    expect(result.steps).toEqual(completedSteps)
+    expect(result.steps.some((step) => step.content.includes('匿名迟到工具结果'))).toBe(false)
   })
 })

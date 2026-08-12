@@ -180,6 +180,55 @@ function buildFinalAnswerMessages(messages: ChatMessage[], finalInstruction?: st
 interface ToolExecutionResult {
   result: string
   rawResult: string
+  status: 'success' | 'timeout' | 'cancelled' | 'tool_error'
+}
+
+interface ToolRunResult {
+  status: ToolExecutionResult['status']
+  value?: string
+  error?: unknown
+}
+
+async function runToolWithTimeout(
+  execute: (signal: AbortSignal) => Promise<string>,
+  timeout: number,
+  signal?: AbortSignal,
+): Promise<ToolRunResult> {
+  const controller = new AbortController()
+  let settleControl: (result: ToolRunResult) => void = () => undefined
+  const control = new Promise<ToolRunResult>((resolve) => {
+    settleControl = resolve
+  })
+  const forwardAbort = () => {
+    controller.abort(signal?.reason || 'aborted')
+    settleControl({ status: 'cancelled' })
+  }
+  signal?.addEventListener('abort', forwardAbort, { once: true })
+
+  const timer = setTimeout(() => {
+    controller.abort('timeout')
+    settleControl({ status: 'timeout' })
+  }, timeout)
+
+  try {
+    if (signal?.aborted) {
+      forwardAbort()
+      return await control
+    }
+    const execution = Promise.resolve().then(() => execute(controller.signal)).then<ToolRunResult, ToolRunResult>(
+      value => ({ status: 'success', value }),
+      error => ({
+        status: controller.signal.aborted
+          ? controller.signal.reason === 'timeout' ? 'timeout' : 'cancelled'
+          : 'tool_error',
+        error,
+      }),
+    )
+    return await Promise.race([execution, control])
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', forwardAbort)
+  }
 }
 
 function buildToolCallKey(name: string, args: Record<string, unknown>): string {
@@ -341,14 +390,14 @@ async function executeTool(
   const tool = getTool(name)
   if (!tool) {
     const result = `错误：工具 "${name}" 不存在。可用工具: ${getAllTools().map((t) => t.name).join(', ')}`
-    return { result, rawResult: result }
+    return { result, rawResult: result, status: 'tool_error' }
   }
 
   const knownParameters = new Set(tool.parameters.map((param) => param.name))
   for (const key of Object.keys(args)) {
     if (!knownParameters.has(key)) {
       const result = `错误：工具参数 "${key}" 不在允许列表中。`
-      return { result, rawResult: result }
+      return { result, rawResult: result, status: 'tool_error' }
     }
   }
 
@@ -356,35 +405,35 @@ async function executeTool(
   for (const param of tool.parameters) {
     if (param.required && !(param.name in args)) {
       const result = `错误：缺少必需参数 "${param.name}"（${param.description}）`
-      return { result, rawResult: result }
+      return { result, rawResult: result, status: 'tool_error' }
     }
     if (param.name in args && typeof args[param.name] !== param.type) {
       const result = `错误：参数 "${param.name}" 必须是 ${param.type} 类型。`
-      return { result, rawResult: result }
+      return { result, rawResult: result, status: 'tool_error' }
     }
   }
 
   if (name === 'save_memory' && !shouldAllowMemoryWrite(userIntent)) {
     const result = '保存被拒绝：只有用户本轮明确要求记住或保存信息时，才能写入长期记忆。'
-    return { result, rawResult: result }
+    return { result, rawResult: result, status: 'tool_error' }
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort('timeout'), timeout)
-  const forwardAbort = () => controller.abort(signal?.reason || 'aborted')
-  signal?.addEventListener('abort', forwardAbort, { once: true })
+  const execution = await runToolWithTimeout(
+    toolSignal => tool.execute(args, { signal: toolSignal, onProgress }),
+    timeout,
+    signal,
+  )
+  if (execution.status !== 'success') {
+    const result = execution.status === 'timeout'
+      ? '工具执行超时。'
+      : execution.status === 'cancelled'
+        ? '工具执行已取消。'
+        : `工具执行出错: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}`
+    return { result, rawResult: result, status: execution.status }
+  }
 
+  const result = execution.value || ''
   try {
-    if (signal?.aborted) {
-      const result = '工具执行已取消。'
-      return { result, rawResult: result }
-    }
-    const result = await Promise.race([
-      tool.execute(args, { signal: controller.signal, onProgress }),
-      new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error('工具执行超时')), timeout)
-      ),
-    ])
     const isRejectedResult = /^(?:错误：|参数 |修改被拒绝|替换失败|整文替换被拒绝|保存被拒绝)/.test(result.trim())
     if (
       tool.confirmationPolicy === 'required'
@@ -393,20 +442,18 @@ async function executeTool(
       && !isRejectedResult
     ) {
       const blocked = `错误：工具 "${name}" 声明为必须确认，但未返回受支持的行动提案。`
-      return { result: blocked, rawResult: blocked }
+      return { result: blocked, rawResult: blocked, status: 'tool_error' }
     }
-    if (isPendingEditResult(result) || isPendingActionResult(result)) return { result, rawResult: result }
+    if (isPendingEditResult(result) || isPendingActionResult(result)) return { result, rawResult: result, status: 'success' }
     return {
       result: name === 'read_selection_context' ? result : truncate(result, getToolTokenBudget(name)),
       rawResult: result,
+      status: 'success',
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     const result = `工具执行出错: ${msg}`
-    return { result, rawResult: result }
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', forwardAbort)
+    return { result, rawResult: result, status: 'tool_error' }
   }
 }
 
@@ -423,12 +470,12 @@ async function executeToolCalls(
   readResultCache?: Map<string, Promise<ToolExecutionResult>>,
   maxNewToolCalls = Number.POSITIVE_INFINITY,
   allowWriteBeyondBudget = false,
-): Promise<Array<{ name: string; result: string; rawResult?: string; executed?: boolean; reused?: boolean }>> {
+): Promise<Array<{ name: string; result: string; rawResult?: string; status?: ToolExecutionResult['status']; executed?: boolean; reused?: boolean }>> {
   // 分离读取类和写入类工具
   const readCalls = toolCalls.filter(tc => isReadTool(tc.name))
   const writeCalls = toolCalls.filter(tc => isWriteTool(tc.name))
 
-  const results: Array<{ name: string; result: string; rawResult?: string; executed?: boolean }> = []
+  const results: Array<{ name: string; result: string; rawResult?: string; status?: ToolExecutionResult['status']; executed?: boolean }> = []
 
   const regularReadCalls = readCalls.filter((call) => call.name !== 'read_selection_context')
   const selectionContextCalls = readCalls.filter((call) => call.name === 'read_selection_context')
@@ -446,6 +493,7 @@ async function executeToolCalls(
             name: tc.name,
             result: reused.result,
             rawResult: reused.rawResult,
+            status: reused.status,
             executed: false,
             reused: true,
           }
@@ -465,6 +513,7 @@ async function executeToolCalls(
           name: tc.name,
           result: executed.result,
           rawResult: executed.rawResult,
+          status: executed.status,
         }
       })
     )
@@ -519,7 +568,7 @@ async function executeToolCalls(
       succeeded = false
     }
     if (succeeded) selectionContextReadLevels?.set(targetId, level)
-    results.push({ name: call.name, result: executed.result, rawResult: executed.rawResult })
+    results.push({ name: call.name, result: executed.result, rawResult: executed.rawResult, status: executed.status })
   }
 
   // 写入类工具本轮只允许执行第一个，避免多个确认卡片之间出现授权范围错配。
@@ -534,7 +583,7 @@ async function executeToolCalls(
     } else {
       if (remainingNewToolCalls > 0) remainingNewToolCalls--
       const executed = await executeTool(firstWriteCall.name, firstWriteCall.args, timeout, userIntent, signal, onProgress)
-      results.push({ name: firstWriteCall.name, result: executed.result, rawResult: executed.rawResult })
+      results.push({ name: firstWriteCall.name, result: executed.result, rawResult: executed.rawResult, status: executed.status })
     }
   }
   for (const tc of writeCalls.slice(1)) {

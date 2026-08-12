@@ -1,5 +1,5 @@
 import type { AiProvider, ChatMessage } from '@/services/ai/types'
-import { buildContext, searchRelevant } from '@/services/rag/pipeline'
+import { buildContextResult, searchRelevant } from '@/services/rag/pipeline'
 import type { SearchResult } from '@/services/rag/types'
 import type { ContextTag } from '@/types/contextTag'
 import { resolveScopeFilePaths } from '@/services/aiScope'
@@ -60,6 +60,7 @@ export interface ScopedKnowledgeResult {
   sources: ReturnType<typeof toRagSources>
   searchedFilePaths?: string[]
   emptyReason?: string
+  coverage: ReturnType<typeof buildContextResult>['coverage']
 }
 
 export async function searchScopedKnowledge(
@@ -76,6 +77,7 @@ export async function searchScopedKnowledge(
       sources: [],
       searchedFilePaths: [],
       emptyReason: 'ContextTag 没有引用可检索文件',
+      coverage: { requested: 0, included: 0, skipped: 0 },
     }
   }
 
@@ -94,14 +96,20 @@ export async function searchScopedKnowledge(
       context: '',
       sources: [],
       searchedFilePaths: scopeFilePaths,
+      coverage: { requested: 0, included: 0, skipped: 0 },
     }
   }
 
+  const contextResult = buildContextResult(results)
+  const includedResults = contextResult.includedSources.map((source) => source.result)
+
   return {
-    status: 'found',
-    context: buildContext(results),
-    sources: toRagSources(results),
+    status: contextResult.text ? 'found' : 'empty',
+    context: contextResult.text,
+    sources: toRagSources(includedResults),
     searchedFilePaths: scopeFilePaths,
+    emptyReason: contextResult.text ? undefined : '检索结果均超出上下文预算',
+    coverage: contextResult.coverage,
   }
 }
 
