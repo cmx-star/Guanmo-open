@@ -48,8 +48,6 @@ export interface Memory {
 }
 
 export interface RAGConfig {
-  chunkSize: number
-  chunkOverlap: number
   topK: number
   similarityThreshold: number
   keywordSearchEnabled: boolean

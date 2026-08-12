@@ -859,17 +859,13 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
             }
             let score = keyword_score(&request.query_text, &terms, chunk, doc);
             if score > 0.0 {
-                keyword_hits.push(apply_boost(
-                    RankedHit {
-                        chunk_index,
-                        score,
-                        vector_score: None,
-                        keyword_score: Some(score),
-                        retrieval_mode: "keyword",
-                    },
-                    doc,
-                    request,
-                ));
+                keyword_hits.push(RankedHit {
+                    chunk_index,
+                    score,
+                    vector_score: None,
+                    keyword_score: Some(score),
+                    retrieval_mode: "keyword",
+                });
             }
         }
     }
@@ -877,7 +873,6 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
     let mut merged = HashMap::<String, RankedHit>::new();
     for hit in vector_hits.into_iter().chain(keyword_hits) {
         let chunk = &index.chunks[hit.chunk_index];
-        let doc = &index.documents[&chunk.document_id];
         if let Some(existing) = merged.get(&chunk.id).cloned() {
             let vector_score = existing
                 .vector_score
@@ -895,27 +890,31 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
             };
             merged.insert(
                 chunk.id.clone(),
-                apply_boost(
-                    RankedHit {
-                        chunk_index: existing.chunk_index,
-                        score,
-                        vector_score: Some(vector_score),
-                        keyword_score: Some(keyword_score),
-                        retrieval_mode: if both {
-                            "hybrid"
-                        } else {
-                            existing.retrieval_mode
-                        },
+                RankedHit {
+                    chunk_index: existing.chunk_index,
+                    score,
+                    vector_score: Some(vector_score),
+                    keyword_score: Some(keyword_score),
+                    retrieval_mode: if both {
+                        "hybrid"
+                    } else {
+                        existing.retrieval_mode
                     },
-                    doc,
-                    request,
-                ),
+                },
             );
         } else {
-            merged.insert(chunk.id.clone(), apply_boost(hit, doc, request));
+            merged.insert(chunk.id.clone(), hit);
         }
     }
-    sort_and_diversify(index, merged.into_values().collect(), request.top_k)
+    let boosted_hits = merged
+        .into_values()
+        .map(|hit| {
+            let chunk = &index.chunks[hit.chunk_index];
+            let doc = &index.documents[&chunk.document_id];
+            apply_boost(hit, doc, request)
+        })
+        .collect();
+    sort_and_diversify(index, boosted_hits, request.top_k)
         .into_iter()
         .map(|hit| {
             let chunk = &index.chunks[hit.chunk_index];
@@ -1046,6 +1045,97 @@ mod tests {
         assert!(terms.contains("索引初始化"));
         assert!(terms.contains("索引"));
         assert!(!terms.contains("rust索引初始化"));
+    }
+
+    fn assert_score(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.000_001,
+            "expected score {expected}, got {actual}"
+        );
+    }
+
+    fn boost_test_index() -> RagIndex {
+        let documents = vec![RawDocument {
+            id: "current".into(),
+            file_path: "C:\\current.md".into(),
+            title: "anonymous".into(),
+            last_modified: 0,
+        }];
+        let chunks = vec![RawChunk {
+            id: "current-1".into(),
+            document_id: "current".into(),
+            content: "rust".into(),
+            content_hash: Some("current-1".into()),
+            index: 0,
+            start_line: 1,
+            end_line: 1,
+            title_path: None,
+            heading: None,
+            source_type: "markdown".into(),
+            embedding: Some("[0.6,0.8]".into()),
+        }];
+        build_index(documents, chunks).0
+    }
+
+    fn boost_test_request() -> RagSearchRequest {
+        RagSearchRequest {
+            query_text: "rust missing".into(),
+            query_vector: None,
+            top_k: 1,
+            threshold: 0.0,
+            file_paths: vec![],
+            keyword_search_enabled: true,
+            current_file_path: Some("c:/current.md".into()),
+            prefer_current_file: true,
+            prefer_recent_documents: false,
+            keyword_only_fallback: false,
+        }
+    }
+
+    #[test]
+    fn search_applies_current_file_boost_once_per_retrieval_mode() {
+        let index = boost_test_index();
+
+        let keyword_hits = search_index(&index, &boost_test_request());
+        assert_eq!(keyword_hits[0].retrieval_mode, "keyword");
+        assert_score(keyword_hits[0].keyword_score.unwrap(), 0.5);
+        assert_score(keyword_hits[0].score, 0.58);
+
+        let vector_request = RagSearchRequest {
+            query_text: String::new(),
+            query_vector: Some(vec![1.0, 0.0]),
+            keyword_search_enabled: false,
+            ..boost_test_request()
+        };
+        let vector_hits = search_index(&index, &vector_request);
+        assert_eq!(vector_hits[0].retrieval_mode, "vector");
+        assert_score(vector_hits[0].vector_score.unwrap(), 0.6);
+        assert_score(vector_hits[0].score, 0.68);
+
+        let hybrid_request = RagSearchRequest {
+            query_vector: Some(vec![1.0, 0.0]),
+            ..boost_test_request()
+        };
+        let hybrid_hits = search_index(&index, &hybrid_request);
+        assert_eq!(hybrid_hits[0].retrieval_mode, "hybrid");
+        assert_score(hybrid_hits[0].vector_score.unwrap(), 0.6);
+        assert_score(hybrid_hits[0].keyword_score.unwrap(), 0.5);
+        assert_score(hybrid_hits[0].score, 0.692);
+        assert_eq!(
+            hybrid_hits
+                .iter()
+                .map(|hit| &hit.chunk.id)
+                .collect::<Vec<_>>(),
+            search_index(&index, &hybrid_request)
+                .iter()
+                .map(|hit| &hit.chunk.id)
+                .collect::<Vec<_>>()
+        );
+        assert!(keyword_hits
+            .iter()
+            .chain(vector_hits.iter())
+            .chain(hybrid_hits.iter())
+            .all(|hit| hit.score <= 1.0));
     }
 
     #[test]

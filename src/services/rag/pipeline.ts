@@ -51,8 +51,6 @@ export interface KnowledgeDocumentState {
 }
 
 const DEFAULT_CONFIG: RAGConfig = {
-  chunkSize: 900,
-  chunkOverlap: 150,
   topK: 5,
   similarityThreshold: 0.5,
   keywordSearchEnabled: true,
@@ -154,10 +152,7 @@ export async function ingestDocument(
 
   const docId = existing?.id || `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
-  const chunks = chunkMarkdown(content, docId, {
-    chunkSize: ragConfig.chunkSize,
-    overlap: ragConfig.chunkOverlap,
-  })
+  const chunks = chunkMarkdown(content, docId)
 
   const nextDocument = {
     id: docId,
