@@ -1,7 +1,13 @@
 import type { Document, Chunk, SearchResult, RAGConfig, RAGContextBuildResult } from './types'
 import { chunkMarkdown } from './chunker'
 import { createExactContentHash } from './contentHash'
-import { createEmbeddingInputHash, EMBEDDING_PREPROCESS_VERSION, getEmbeddingInput } from './embeddingInput'
+import {
+  averageEmbeddingVectors,
+  buildEmbeddingInputs,
+  createEmbeddingInputHash,
+  EMBEDDING_PREPROCESS_VERSION,
+  type EmbeddingInputPart,
+} from './embeddingInput'
 import { canSkipDocumentIndex, canSkipDocumentIndexMetadata, reconcileDocumentChunks, type IndexUpdateStats } from './reconciler'
 import { vectorStore } from './vectorStore'
 import { getEmbeddingClient, getEmbeddingConfig, isEmbeddingReady } from '@/services/ai/aiClient'
@@ -190,25 +196,49 @@ async function embedChunks(chunks: Chunk[]): Promise<EmbedResult> {
   const result: EmbedResult = { embedded: 0, failed: 0, errors: [] }
   const BATCH_SIZE = 100
 
-  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-    const batch = chunks.slice(i, i + BATCH_SIZE)
-    await Promise.all(batch.map(async (chunk) => {
-      chunk.embeddingInputHash = await createEmbeddingInputHash(chunk)
-      chunk.embeddingModel = embeddingModel
-      chunk.embeddingPreprocessVersion = EMBEDDING_PREPROCESS_VERSION
-    }))
-    const texts = batch.map(getEmbeddingInput)
+  interface EmbeddingWorkItem extends EmbeddingInputPart {
+    chunk: Chunk
+    partCount: number
+  }
+
+  await Promise.all(chunks.map(async (chunk) => {
+    chunk.embeddingInputHash = await createEmbeddingInputHash(chunk)
+    chunk.embeddingModel = embeddingModel
+    chunk.embeddingPreprocessVersion = EMBEDDING_PREPROCESS_VERSION
+  }))
+  const workItems = chunks.flatMap((chunk) => {
+    const parts = buildEmbeddingInputs(chunk)
+    return parts.map((part): EmbeddingWorkItem => ({ ...part, chunk, partCount: parts.length }))
+  })
+  const vectorsByChunk = new Map<string, number[][]>()
+
+  const recordFailure = (item: EmbeddingWorkItem, reason: string): void => {
+    result.errors.push(
+      `chunk ${item.chunk.id} input ${item.partIndex + 1}/${item.partCount} lines ${item.startLine}-${item.endLine}: ${reason}`,
+    )
+  }
+  const recordVector = (item: EmbeddingWorkItem, vector: number[] | undefined): void => {
+    if (!vector?.length || vector.some((value) => !Number.isFinite(value))) {
+      recordFailure(item, 'invalid embedding response')
+      return
+    }
+    const vectors = vectorsByChunk.get(item.chunk.id) || []
+    if (vectors[0] && vectors[0].length !== vector.length) {
+      recordFailure(item, 'embedding dimension mismatch')
+      return
+    }
+    vectors.push(vector)
+    vectorsByChunk.set(item.chunk.id, vectors)
+  }
+
+  for (let i = 0; i < workItems.length; i += BATCH_SIZE) {
+    const batch = workItems.slice(i, i + BATCH_SIZE)
+    const texts = batch.map((item) => item.text)
 
     try {
       const embeddings = await client.batchEmbedding(texts)
       for (let j = 0; j < batch.length; j++) {
-        if (embeddings[j]) {
-          batch[j].embedding = embeddings[j]
-          result.embedded++
-        } else {
-          result.failed++
-          result.errors.push(`chunk ${batch[j].id}: no embedding returned`)
-        }
+        recordVector(batch[j], embeddings[j])
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -217,17 +247,28 @@ async function embedChunks(chunks: Chunk[]): Promise<EmbedResult> {
         throw err
       }
       // 其他错误（如单条文本过长）fallback 到逐个重试
-      console.warn(`Batch embedding failed, falling back to serial: ${msg}`)
-      for (const chunk of batch) {
+      console.warn('Batch embedding failed, falling back to bounded serial retries')
+      for (const item of batch) {
         try {
-          const response = await client.embedding(chunk.content)
-          chunk.embedding = response.embedding
-          result.embedded++
-        } catch (serialErr) {
-          result.failed++
-          const serialMsg = serialErr instanceof Error ? serialErr.message : String(err)
-          result.errors.push(`chunk ${chunk.id}: ${serialMsg}`)
+          const response = await client.embedding(item.text)
+          recordVector(item, response.embedding)
+        } catch {
+          recordFailure(item, 'embedding request failed')
         }
+      }
+    }
+  }
+
+  for (const chunk of chunks) {
+    const embedding = averageEmbeddingVectors(vectorsByChunk.get(chunk.id) || [])
+    if (embedding) {
+      chunk.embedding = embedding
+      result.embedded += 1
+    } else {
+      chunk.embedding = undefined
+      result.failed += 1
+      if (!result.errors.some((error) => error.startsWith(`chunk ${chunk.id} `))) {
+        result.errors.push(`chunk ${chunk.id}: no valid embedding returned`)
       }
     }
   }
