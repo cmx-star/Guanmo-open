@@ -371,6 +371,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
+    let stopReadingReminderRuntime: (() => void) | undefined
     async function init() {
       const appInitStartedAt = performance.now()
 
@@ -415,6 +416,12 @@ function App() {
         if (READING_REMINDER_FEATURE_AVAILABLE) {
           void import('@/services/readingReminders')
             .then(({ reconcileReadingReminders }) => reconcileReadingReminders())
+            .then(() => import('@/services/readingReminderRuntime'))
+            .then(({ startReadingReminderRuntime, stopReadingReminderRuntime: stopRuntime }) => {
+              if (cancelled) return
+              stopReadingReminderRuntime = stopRuntime
+              startReadingReminderRuntime()
+            })
             .catch((error) => console.warn('[Reminder] startup reconciliation failed:', error))
         }
 
@@ -439,6 +446,7 @@ function App() {
     void init()
     return () => {
       cancelled = true
+      stopReadingReminderRuntime?.()
     }
   }, [])
 

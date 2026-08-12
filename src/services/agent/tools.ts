@@ -925,7 +925,7 @@ export function registerBuiltinTools() {
 
   registerTool({
     name: 'propose_create_reading_reminder',
-    description: '提醒功能当前开发中。调用时只返回开发状态，不创建提醒或确认卡。',
+    description: '提出创建一次性阅读提醒的行动提案。只生成确认卡，用户确认后才注册提醒。',
     parameters: [
       { name: 'title', type: 'string', description: '提醒标题', required: true },
       { name: 'description', type: 'string', description: '提醒说明', required: false },

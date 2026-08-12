@@ -10,6 +10,7 @@ import {
   readingReminderNotificationAdapter,
   type ReadingReminderNotificationAdapter,
 } from './readingReminderNotifications'
+import { refreshReadingReminderRuntime } from './readingReminderRuntime'
 
 export interface CreateReadingReminderInput {
   id: string
@@ -26,6 +27,8 @@ function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   if (message === 'notification_unavailable') return message
   if (message === 'unsupported_platform') return message
+  if (/notification_registration_failed/.test(message)) return 'notification_registration_failed'
+  if (/notification_show_failed/.test(message)) return 'notification_show_failed'
   if (/notification_cancel_failed/.test(message)) return 'notification_cancel_failed'
   if (/notification_list_failed/.test(message)) return 'notification_list_failed'
   if (/permission/i.test(message)) return 'notification_permission_denied'
@@ -63,6 +66,7 @@ async function scheduleReminder(
     })
     throw error
   }
+  refreshReadingReminderRuntime()
   return (await loadReadingReminderById(reminder.id))!
 }
 
@@ -95,6 +99,7 @@ export async function cancelReadingReminder(
   try {
     if (reminder.notificationId) await adapter.cancel(reminder.notificationId)
     await updateReadingReminderState(id, 'cancelled', { errorCode: null })
+    refreshReadingReminderRuntime()
   } catch (error) {
     await updateReadingReminderState(id, 'failed', { errorCode: 'notification_cancel_failed' })
     throw error
@@ -109,7 +114,9 @@ export async function retryReadingReminder(
   if (!reminder || reminder.status !== 'failed') return reminder
   if (reminder.errorCode === 'notification_cancel_failed') {
     await cancelReadingReminder(id, adapter)
-    return loadReadingReminderById(id)
+    const cancelled = await loadReadingReminderById(id)
+    refreshReadingReminderRuntime()
+    return cancelled
   }
   await updateReadingReminderState(id, 'pending', { errorCode: null })
   return scheduleReminder(reminder, adapter, true)
@@ -192,11 +199,7 @@ export async function reconcileReadingReminders(
       continue
     }
     if (!['pending', 'scheduled'].includes(reminder.status)) continue
-    if (reminder.dueAtUtc <= now) {
-      await updateReadingReminderState(reminder.id, 'fired', { errorCode: null })
-      result.fired += 1
-      continue
-    }
+    if (reminder.dueAtUtc <= now) continue
     if (!granted) {
       await updateReadingReminderState(reminder.id, 'failed', {
         errorCode: 'notification_permission_unavailable',

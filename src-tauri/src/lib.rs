@@ -1352,6 +1352,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            if let Err(err) =
+                reading_reminder_notifications::ensure_windows_notification_registration()
+            {
+                if err != "unsupported_platform" {
+                    eprintln!("failed to initialize Windows notifications: {err}");
+                }
+            }
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(err) = restore_persisted_file_access(&app_handle) {
@@ -1361,6 +1368,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            reading_reminder_notifications::get_windows_notification_status,
+            reading_reminder_notifications::show_windows_notification,
             reading_reminder_notifications::schedule_reading_reminder_notification,
             reading_reminder_notifications::list_pending_reading_reminder_notification_ids,
             reading_reminder_notifications::cancel_reading_reminder_notification,
