@@ -51,6 +51,7 @@
         "test:store-actions": "node scripts/run-store-actions-check.mjs",
         "test:rag-index": "node scripts/run-rag-index-check.mjs",
         "test:rag-query": "node scripts/run-rag-query-benchmark.mjs",
+        "test:rag-eval": "node scripts/run-rag-offline-evaluation.mjs",
         "test:runtime-schemas": "node scripts/run-runtime-schemas-check.mjs",
         "test:file-access": "node scripts/run-file-access-check.mjs",
         "test:session-restore": "node scripts/run-session-restore-check.mjs",

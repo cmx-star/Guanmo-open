@@ -15,7 +15,7 @@ import { buildContextFromTags } from '@/services/contextBuilder'
 import { readFile as readTauriFile } from '@/hooks/useTauri'
 import { setAgentScopeContext } from '@/services/aiScope'
 import { searchScopedKnowledge, shouldTriggerScopedRag, streamFinalAnswer } from '@/services/aiChatFlow'
-import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForModel, buildSupplementalAiContext, countRagSourcesInContext, createContextMeta, createUserChatMessage, prepareChatHistoryForModel, resolveAiAnswerMode } from '@/services/aiChatMessages'
+import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForModel, countRagSourcesInContext, createContextMeta, createUserChatMessage, prepareChatHistoryForModel, resolveAiAnswerMode } from '@/services/aiChatMessages'
 import { hideLikelyToolJsonPrefix, stripToolCallJson } from '@/services/agent/toolCallParser'
 import { buildMemoryContext, isPersonalizedRewriteMemoryIntent, processMemoryCandidateExtraction, searchMemories } from '@/services/memory/memoryService'
 import type { ManualCapability } from '@/components/ai/ManualToolToggle'
@@ -468,6 +468,7 @@ export function useAiChat() {
           },
           customPreferencePrompt: ai.customPreferencePrompt,
           streamEnabled: ai.streamEnabled,
+          contextWindowTokens: ai.maxContextLength,
         })
         const { editTargets, originalRequest: contextOriginalRequest } = agentRequest
 
@@ -517,6 +518,7 @@ export function useAiChat() {
               signal: requestController.signal,
               temperature: SYSTEM_TEMPERATURE.agentAnswer,
               reasoningMode,
+              contextWindowTokens: ai.maxContextLength,
             })
 
             if (!isCurrentRequest()) {
@@ -646,14 +648,10 @@ export function useAiChat() {
       }
 
       // 注入 RAG 上下文和 Memory 上下文
-      const injectedContext = buildSupplementalAiContext({
-        knowledgeContext: ragContext,
-        memoryContext,
-      })
       const finalMessages = buildMessagesForModel({
         history: prepareChatHistoryForModel(messages),
         userMessage: userMsg,
-        supplementalContext: injectedContext,
+        supplementalContexts: [ragContext, memoryContext].filter(Boolean),
         customPreferencePrompt: ai.customPreferencePrompt,
         answerMode: resolveAiAnswerMode(selectionRequestKind, useAgentMode),
       })
@@ -694,6 +692,7 @@ export function useAiChat() {
           signal: requestController.signal,
           temperature: ai.temperature,
           reasoningMode,
+          contextWindowTokens: ai.maxContextLength,
         })
         if (!isCurrentRequest()) return
         if (isCurrentRequest()) addTimelineItem({ type: 'done', label: '生成回答完成' })

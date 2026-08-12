@@ -72,6 +72,7 @@ export function buildAgentRunRequest(options: {
   onStreamContent?: (content: string) => void
   customPreferencePrompt?: string
   streamEnabled: boolean
+  contextWindowTokens?: number
 }): {
   request: AgentRunRequest
   editTargets: AgentEditTarget[]
@@ -84,9 +85,8 @@ export function buildAgentRunRequest(options: {
     (tag) => tag.type === 'selection' || tag.type === 'file'
   ).length
   const editTargetsContext = buildEditTargetsContext(editTargets)
-  const untrustedContext = [options.tagContext, editTargetsContext, options.memoryContext]
-    .filter(Boolean)
-    .join('\n\n')
+  const untrustedContexts = [options.tagContext, editTargetsContext, options.memoryContext].filter(Boolean)
+  const untrustedContext = untrustedContexts.join('\n\n')
   const currentUserIntent = options.routingDecision.explicitMemoryWriteIntent
     ? `记住：${content}`
     : content
@@ -111,9 +111,11 @@ export function buildAgentRunRequest(options: {
       onStep: options.onStep,
       onStreamContent: options.onStreamContent,
       requiredCapabilities: options.routingDecision.required,
+      untrustedContexts,
       untrustedContext,
       customPreferencePrompt: options.customPreferencePrompt,
       streamEnabled: options.streamEnabled,
+      contextWindowTokens: options.contextWindowTokens,
       routingDecision: options.routingDecision,
     },
   }

@@ -5,14 +5,14 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 6｜统一模型上下文预算
+- 当前阶段：阶段 8｜结构化 Embedding 与邻居扩展
 - 阶段状态：未开始
-- 上次执行结果：RAG-04 已完成；超长父 Chunk 仅在 Embedding 请求层拆分，成功子向量均值聚合回父 Chunk，局部失败不泄露正文且不阻断其他 Chunk
-- 验证结果：RAG 测试 35/35、RAG index、runtime schema、typecheck 通过；定向 ESLint 0 error（1 个既有 warning）；`git diff --check` 通过
-- 本阶段剩余：冻结模型窗口、输出预留和各类上下文优先级契约，再实现 Direct、Agent 与最终综合回答的统一总预算
-- 本阶段允许修改：Direct/Agent 请求装箱、RAG/Memory/选区上下文衔接、直接测试与本文件；实施前核实精确文件范围
+- 上次执行结果：阶段 6、7 已完成；Direct、Agent、最终综合回答共享统一总预算与一次安全降级，匿名 RAG 固定评测集和 baseline runner 已建立
+- 验证结果：阶段 6 定向测试 25/25、selection/runtime schema、typecheck、desktop build、匿名隔离 Tauri 长对话通过；阶段 7 六项质量指标 1.0、无答案误召回率 0、RAG query 通过；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
+- 本阶段剩余：先对照阶段 7 baseline 冻结结构化 Embedding 输入版本和邻居边界，再实施阶段 8
+- 本阶段允许修改：按阶段 8 实施前核实精确文件范围
 - 阻塞问题：无
-- 下一阶段：阶段 7｜RAG 离线评测基线
+- 下一阶段：阶段 9｜Rust 原生请求取消
 - Git 状态：分支 `codex/defect-capability-fixes`；未提交、未推送
 
 ## 项目目标
@@ -192,39 +192,40 @@
 
 ### 目标
 
-只完成 CONTEXT-02、CONTEXT-01：建立 Direct、Agent 和最终综合回答共用的模型上下文总预算，优先保留近期原文、用户约束、授权和未完成事项，并保持原始 SQLite 历史不变。
+只完成 RAG-06、RAG-07：将文档标题、标题路径和块类型纳入版本化 Embedding 输入，并在阶段 7 baseline 不回退的前提下，于剩余预算内扩展同文档相邻证据。
 
 ### 允许修改
 
-- Direct/Agent 请求装箱与统一预算直接相关文件（实施前按实际调用链冻结精确范围）
-- RAG、Memory、选区和工具结果的装箱衔接文件（仅限预算接入）
-- `tests/agent/**`、`tests/rag/**`（仅限直接相关测试）
+- Embedding 预处理版本、渐进重建与直接测试（实施前按实际调用链冻结精确范围）
+- RAG 检索结果邻居装箱及直接测试（仅限剩余预算内扩展）
+- 阶段 7 匿名评测 Fixture 与 runner（仅用于证明指标不回退或补充目标场景）
 - `AI_IMPLEMENTATION_PLAN.md`
 
 ### 实施任务
 
-1. 先核实 Direct、Agent、最终综合回答的请求入口和模型窗口来源，冻结窗口、输出预留、固定开销与匿名诊断契约。
-2. 定义系统 Prompt、当前问题、近期历史、RAG、Memory、选区和工具结果的统一装箱优先级，语义原子不得静默截断。
-3. 接入普通聊天与 Agent，再接 RAG/选区完整语义原子；原始 SQLite 历史只读，不修改或摘要回写。
-4. 为服务端超限建立至多一次、无副作用的安全降级；不得重复工具或写入副作用。
-5. 用小窗口假模型和匿名长对话验证预算硬上限、关键约束保留与降级诊断，再更新状态与阶段历史。
+1. 冻结文档标题、标题路径、块类型的版本化 Embedding 输入格式，以及旧向量兼容和渐进重建条件。
+2. 实施结构化 Embedding 输入，确保标题变化和预处理版本变化只触发必要重建。
+3. 在统一上下文剩余预算内扩展同文档相邻证据，禁止跨越不相关标题边界或重复装箱。
+4. 将扩展证据标记为 `neighbor-context`，保持原 TopK、排序、来源元数据和旧结果兼容。
+5. 使用阶段 7 baseline 与目标场景验证指标不回退且目标场景有收益，再更新状态与阶段历史。
 
 ### 验收标准
 
-- [ ] Direct、Agent 和最终综合回答共享同一总预算与输出预留契约。
-- [ ] 长对话不再无条件发送全部历史，近期原文、用户约束、授权和未完成事项不可淘汰。
-- [ ] RAG、Memory、选区和工具结果按完整语义原子装箱，超限行为可诊断且不记录正文。
-- [ ] 原始 SQLite 历史不修改；超限最多安全重试一次且不重复副作用。
-- [ ] 小窗口假模型定向测试、相关现有回归、runtime schema、typecheck、定向 ESLint、desktop build、真实 Tauri 长对话验收和 diff 检查通过。
+- [ ] 旧向量继续可读，结构化输入按版本渐进重建，标题变化触发正确重建。
+- [ ] 邻居扩展只使用剩余预算，不跨不相关标题边界、不重复，并标记为 `neighbor-context`。
+- [ ] 原 TopK、检索排序、来源元数据和完整语义 Chunk 保持兼容。
+- [ ] 阶段 7 baseline 指标不回退，至少一个匿名目标场景证明邻居扩展收益。
+- [ ] RAG index/query/eval、runtime schema、typecheck、Rust 定向测试与 diff 检查通过。
 
 ### 检查命令
 
-在阶段 6 冻结精确调用链后回填，至少包含小窗口假模型、选区/RAG/Agent 相关定向测试、runtime schema、typecheck、定向 ESLint、desktop build、真实 Tauri 长对话验收和 `git diff --check`。
+在阶段 8 冻结精确调用链后回填，至少包含 RAG index/query/eval、runtime schema、typecheck、Rust 定向测试和 `git diff --check`。
 
 ### 禁止事项
 
-- 不修改检索排序、权重、Prompt 内容或持久化聊天正文。
-- 不静默截断选区、RAG 或关键用户约束，不重复工具或写入副作用。
+- 不在 baseline 无收益或回退时调整检索权重、阈值或引入 reranker。
+- 不要求用户清库或一次性重建全部旧向量。
+- 不跨不相关标题边界扩展邻居，不重复或静默截断完整语义 Chunk。
 - 不新增无关依赖，不重构整个聊天或 Agent 架构。
 - 不修改或夹带已有无关工作区文件。
 - 不自动提交、推送、打 tag、创建 Release 或 PR。
@@ -265,6 +266,20 @@
 - 完成内容：超长父 Chunk 仅在 Embedding 请求层按安全边界拆分并保留准确行号；成功子向量均值聚合回父 Chunk；批量失败后每个子输入最多重试一次，匿名错误不含正文；v1 向量保持可读并按 v2 预处理版本渐进重建
 - 验证结果：`npx vitest run tests/rag` 35/35、`npm run test:rag-index`、`npm run test:runtime-schemas`、`npm run typecheck` 通过；定向 ESLint 0 error（1 个既有 warning）；`git diff --check` 通过
 - 遗留问题：无
+
+### 阶段 6｜统一模型上下文预算
+
+- 状态：已完成
+- 完成内容：基于 `maxContextLength` 建立统一窗口、25% 输出预留和固定开销契约；Direct、Agent 循环和最终综合回答共用完整消息原子装箱；优先保留系统规则、当前问题、约束、授权和未完成事项；服务端超限仅重装箱并安全重试一次
+- 验证结果：小窗口及降级定向测试与 Agent/RAG 回归 25/25、selection context、runtime schema、typecheck、desktop build 通过；匿名隔离 Tauri 假模型长对话确认请求受预算约束并保留关键约束；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
+- 遗留问题：无
+
+### 阶段 7｜RAG 离线评测基线
+
+- 状态：已完成
+- 完成内容：新增匿名固定问题—证据集、内存评测 runner、JSON 指标输出和基线说明；固定现有关键词、向量融合、阈值和多文档多样化逻辑
+- 验证结果：Recall@3、MRR、NDCG@3、来源准确率、groundedness 均为 1.0，无答案误召回率为 0；冷/热延迟可重复记录；`npm run test:rag-query` 与 `git diff --check` 通过
+- 遗留问题：当前 Fixture 为最小确定性基线，后续质量能力应按真实匿名失败场景增量扩充，不得读取用户数据
 
 ## 新窗口执行提示词
 

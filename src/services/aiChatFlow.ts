@@ -5,6 +5,7 @@ import type { ContextTag } from '@/types/contextTag'
 import { resolveScopeFilePaths } from '@/services/aiScope'
 import { hideLikelyToolJsonPrefix } from '@/services/agent/toolCallParser'
 import type { RagSearchProgress } from '@/services/rag/nativeIndex'
+import { isModelContextOverflowError, packModelContext } from '@/services/ai/contextBudget'
 
 function createStreamContentFlusher(
   onUpdate: (content: string) => void,
@@ -145,40 +146,49 @@ export async function streamFinalAnswer(options: {
   signal?: AbortSignal
   temperature?: number
   reasoningMode?: 'off' | 'on'
+  contextWindowTokens?: number
 }): Promise<void> {
   const filter = options.filterToolJson ?? false
+  const contextWindow = options.contextWindowTokens || 8192
 
-  if (options.streamEnabled) {
-    const stream = options.client.streamChat({
-      messages: options.messages,
-      signal: options.signal,
-      temperature: options.temperature,
-      reasoningMode: options.reasoningMode,
-    })
-    let accumulated = ''
-    const transform = (content: string) => filter ? hideLikelyToolJsonPrefix(content) : content
-    const flusher = createStreamContentFlusher(options.onUpdate, options.isCancelled, transform)
-
+  for (const retryLevel of [0, 1] as const) {
+    const packed = packModelContext(options.messages, contextWindow, retryLevel)
     try {
-      for await (const chunk of stream) {
-        if (options.isCancelled()) break
-        accumulated += chunk.content
-        flusher.schedule(accumulated)
-        if (chunk.done) break
+      if (options.streamEnabled) {
+        const stream = options.client.streamChat({
+          messages: packed.messages,
+          maxTokens: packed.maxTokens,
+          signal: options.signal,
+          temperature: options.temperature,
+          reasoningMode: options.reasoningMode,
+        })
+        let accumulated = ''
+        const transform = (content: string) => filter ? hideLikelyToolJsonPrefix(content) : content
+        const flusher = createStreamContentFlusher(options.onUpdate, options.isCancelled, transform)
+        try {
+          for await (const chunk of stream) {
+            if (options.isCancelled()) break
+            accumulated += chunk.content
+            flusher.schedule(accumulated)
+            if (chunk.done) break
+          }
+        } finally {
+          flusher.flush()
+        }
+      } else {
+        const response = await options.client.chat({
+          messages: packed.messages,
+          maxTokens: packed.maxTokens,
+          signal: options.signal,
+          temperature: options.temperature,
+          reasoningMode: options.reasoningMode,
+        })
+        if (!options.isCancelled()) options.onUpdate(filter ? hideLikelyToolJsonPrefix(response.content) : response.content)
       }
-    } finally {
-      flusher.flush()
+      return
+    } catch (error) {
+      if (retryLevel === 1 || !isModelContextOverflowError(error) || options.isCancelled()) throw error
+      console.warn('[AI context] retrying with reduced anonymous budget', packed.diagnostics)
     }
-    return
-  }
-
-  const response = await options.client.chat({
-    messages: options.messages,
-    signal: options.signal,
-    temperature: options.temperature,
-    reasoningMode: options.reasoningMode,
-  })
-  if (!options.isCancelled()) {
-    options.onUpdate(filter ? hideLikelyToolJsonPrefix(response.content) : response.content)
   }
 }

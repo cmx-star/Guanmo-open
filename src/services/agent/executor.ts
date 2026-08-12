@@ -32,6 +32,7 @@ import {
   LOCAL_RESEARCH_ANSWER_PROMPT,
   WEB_COMPARISON_ANSWER_PROMPT,
 } from './answerInstructions'
+import { isModelContextOverflowError, packModelContext } from '@/services/ai/contextBudget'
 
 let toolsRegistered = false
 
@@ -627,8 +628,10 @@ export async function runAgent({
   onStreamContent,
   requiredCapabilities,
   untrustedContext,
+  untrustedContexts,
   customPreferencePrompt,
   streamEnabled = true,
+  contextWindowTokens = 8192,
   routingDecision,
 }: AgentRunRequest): Promise<AgentResult> {
   initAgent()
@@ -736,11 +739,14 @@ export async function runAgent({
   const systemPrompt = buildSystemPrompt(mergedConfig, activeToolNames, customPreferencePrompt)
   const llmTools = candidateTools.length > 0 ? getToolsForLLM(activeToolNames) : []
 
-  const contextMessage = buildUntrustedContextMessage(untrustedContext || '')
+  const contextMessages = (untrustedContexts?.length ? untrustedContexts : [untrustedContext || ''])
+    .filter(Boolean)
+    .map((context) => buildUntrustedContextMessage(context))
+    .filter((message): message is ChatMessage => Boolean(message))
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
-    ...chatHistory.slice(-4), // Keep last 4 messages for context
-    ...(contextMessage ? [contextMessage] : []),
+    ...chatHistory,
+    ...contextMessages,
     ...(answerInstruction ? [{ role: 'user' as const, content: answerInstruction }] : []),
     { role: 'user', content: query },
   ]
@@ -768,58 +774,71 @@ export async function runAgent({
   })
 
   const requestAgentCompletion = async () => {
-    if (!streamEnabled) {
-      return client.chat({
-        messages,
+    const requestOnce = async (retryLevel: 0 | 1) => {
+      const packed = packModelContext(messages, contextWindowTokens, retryLevel)
+      if (!streamEnabled) {
+        return client.chat({
+          messages: packed.messages,
+          maxTokens: packed.maxTokens,
+          signal,
+          temperature,
+          tools: llmTools,
+          toolChoice: 'auto',
+        })
+      }
+
+      let content = ''
+      const toolCallBuffers = new Map<number, { id?: string; name: string; arguments: string }>()
+
+      for await (const chunk of client.streamChat({
+        messages: packed.messages,
+        maxTokens: packed.maxTokens,
         signal,
         temperature,
         tools: llmTools,
         toolChoice: 'auto',
-      })
-    }
-
-    let content = ''
-    const toolCallBuffers = new Map<number, { id?: string; name: string; arguments: string }>()
-
-    for await (const chunk of client.streamChat({
-      messages,
-      signal,
-      temperature,
-      tools: llmTools,
-      toolChoice: 'auto',
-    })) {
-      if (chunk.toolCallDeltas?.length) {
-        for (const delta of chunk.toolCallDeltas) {
-          const current = toolCallBuffers.get(delta.index) || { name: '', arguments: '' }
-          toolCallBuffers.set(delta.index, {
-            id: delta.id || current.id,
-            name: current.name + (delta.name || ''),
-            arguments: current.arguments + (delta.arguments || ''),
-          })
-        }
-      }
-      if (chunk.content) {
-        content += chunk.content
-        onStreamContent?.(content)
-      }
-      if (chunk.done) break
-    }
-
-    return {
-      id: '',
-      content,
-      role: 'assistant' as const,
-      toolCalls: Array.from(toolCallBuffers.values())
-        .filter((call) => call.name)
-        .map((call) => {
-          let args: Record<string, unknown> = {}
-          try {
-            args = call.arguments ? JSON.parse(call.arguments) : {}
-          } catch {
-            args = {}
+      })) {
+        if (chunk.toolCallDeltas?.length) {
+          for (const delta of chunk.toolCallDeltas) {
+            const current = toolCallBuffers.get(delta.index) || { name: '', arguments: '' }
+            toolCallBuffers.set(delta.index, {
+              id: delta.id || current.id,
+              name: current.name + (delta.name || ''),
+              arguments: current.arguments + (delta.arguments || ''),
+            })
           }
-          return { id: call.id, name: call.name, args }
-        }),
+        }
+        if (chunk.content) {
+          content += chunk.content
+          onStreamContent?.(content)
+        }
+        if (chunk.done) break
+      }
+
+      return {
+        id: '',
+        content,
+        role: 'assistant' as const,
+        toolCalls: Array.from(toolCallBuffers.values())
+          .filter((call) => call.name)
+          .map((call) => {
+            let args: Record<string, unknown> = {}
+            try {
+              args = call.arguments ? JSON.parse(call.arguments) : {}
+            } catch {
+              args = {}
+            }
+            return { id: call.id, name: call.name, args }
+          }),
+      }
+    }
+
+    try {
+      return await requestOnce(0)
+    } catch (error) {
+      if (!isModelContextOverflowError(error) || signal?.aborted) throw error
+      console.warn('[Agent context] retrying model request with reduced anonymous budget')
+      return requestOnce(1)
     }
   }
 
@@ -904,13 +923,30 @@ export async function runAgent({
     })
 
     try {
-      const response = await client.chat({
-        messages,
-        signal,
-        temperature,
-        tools: [],
-        toolChoice: 'none',
-      })
+      let response
+      try {
+        const packed = packModelContext(messages, contextWindowTokens)
+        response = await client.chat({
+          messages: packed.messages,
+          maxTokens: packed.maxTokens,
+          signal,
+          temperature,
+          tools: [],
+          toolChoice: 'none',
+        })
+      } catch (error) {
+        if (!isModelContextOverflowError(error) || signal?.aborted) throw error
+        console.warn('[Agent context] retrying direct model request with reduced anonymous budget')
+        const packed = packModelContext(messages, contextWindowTokens, 1)
+        response = await client.chat({
+          messages: packed.messages,
+          maxTokens: packed.maxTokens,
+          signal,
+          temperature,
+          tools: [],
+          toolChoice: 'none',
+        })
+      }
 
       return {
         answer: response.content,

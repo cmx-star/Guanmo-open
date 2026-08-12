@@ -94,8 +94,10 @@ export interface AgentRunRequest {
   onStreamContent?: (content: string) => void
   requiredCapabilities?: readonly Capability[]
   untrustedContext?: string
+  untrustedContexts?: string[]
   customPreferencePrompt?: string
   streamEnabled?: boolean
+  contextWindowTokens?: number
   routingDecision?: RoutingDecision
 }
 
