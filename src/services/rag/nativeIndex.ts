@@ -127,7 +127,13 @@ export async function getNativeRagIndexState(): Promise<RagIndexState> {
 
 export async function initializeNativeRagIndex(signal?: AbortSignal): Promise<RagIndexState> {
   ensureDesktop()
-  return decodeRagIndexState(await awaitForRequest(invoke('initialize_rag_index'), signal))
+  const abort = () => { void invoke('cancel_rag_index_initialization').catch(() => undefined) }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    return decodeRagIndexState(await awaitForRequest(invoke('initialize_rag_index'), signal))
+  } finally {
+    signal?.removeEventListener('abort', abort)
+  }
 }
 
 export async function searchNativeRagIndex(
@@ -135,6 +141,7 @@ export async function searchNativeRagIndex(
   onProgress?: (progress: RagSearchProgress) => void,
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
+  try { localStorage.setItem('guanmo-rag-last-used-at', String(Date.now())) } catch { /* unavailable */ }
   onProgress?.('searching')
   return decodeRagSearchResults(await awaitForRequest(invoke('search_rag_index', { request }), signal))
 }

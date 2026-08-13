@@ -50,6 +50,8 @@ type NativeStreamEvent =
   | { event: 'end' }
   | { event: 'error'; error: { code: string; message: string; origin?: string } }
 
+const STREAM_ACK_WINDOW = 4
+
 let authorizationPrompt: OriginAuthorizationPrompt = showOriginAuthorizationDialog
 const pendingAuthorizations = new Map<string, Promise<OriginAuthorizationChoice>>()
 
@@ -200,6 +202,24 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
     let controller: ReadableStreamDefaultController<Uint8Array> | null = null
     let settled = false
     let completed = false
+    const pendingChunks: Uint8Array[] = []
+    let streamEnded = false
+    let pullPending = false
+
+    const acknowledgeChunk = () => {
+      void invoke('acknowledge_external_http_stream', { requestId: request.requestId }).catch(() => undefined)
+    }
+
+    const drain = () => {
+      if (!controller || !pullPending || pendingChunks.length === 0) {
+        if (controller && streamEnded) controller.close()
+        return
+      }
+      pullPending = false
+      controller.enqueue(pendingChunks.shift()!)
+      acknowledgeChunk()
+      if (pendingChunks.length === 0 && streamEnded) controller.close()
+    }
 
     const cancelNative = () => {
       if (completed) return
@@ -246,21 +266,32 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
         const hasBody = ![204, 205, 304].includes(event.status)
         const stream = hasBody ? new ReadableStream<Uint8Array>({
           start(value) { controller = value },
+          pull() {
+            pullPending = true
+            drain()
+          },
           cancel() {
             cancelNative()
             signal?.removeEventListener('abort', abort)
           },
-        }) : null
+        }, { highWaterMark: 0 }) : null
         settled = true
         resolve(new Response(stream, { status: event.status, headers: event.headers }))
         return
       }
       if (event.event === 'chunk') {
-        controller?.enqueue(Uint8Array.from(event.data))
+        if (pendingChunks.length >= STREAM_ACK_WINDOW) {
+          cancelNative()
+          fail(new ExternalHttpError('STREAM_BACKPRESSURE_EXCEEDED', '流式响应超过慢消费者缓冲上限'))
+          return
+        }
+        pendingChunks.push(Uint8Array.from(event.data))
+        drain()
         return
       }
       completed = true
-      controller?.close()
+      streamEnded = true
+      if (pendingChunks.length === 0) controller?.close()
       signal?.removeEventListener('abort', abort)
     }
 

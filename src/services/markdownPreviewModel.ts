@@ -73,6 +73,7 @@ export interface ReferenceDefinition {
   label?: string
   url: string
   title?: string
+  rawSource: string
 }
 
 export interface FootnoteDefinition {
@@ -82,6 +83,7 @@ export interface FootnoteDefinition {
   endLine: number
   startOffset: number
   endOffset: number
+  rawSource: string
 }
 
 export interface MarkdownPreviewModel {
@@ -167,6 +169,7 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
           label: node.label,
           url: node.url,
           title: node.title,
+          rawSource: rawContent.slice(startOffset, endOffset),
         })
       }
       continue
@@ -180,6 +183,7 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
           endLine,
           startOffset,
           endOffset,
+          rawSource: rawContent.slice(startOffset, endOffset),
         })
       }
       // footnote definition 仍然作为可见块保留，但放入 definitions 表中供引用解析

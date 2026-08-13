@@ -13,7 +13,7 @@ use std::{
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -31,6 +31,8 @@ const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
+const STREAM_BATCH_BYTES: usize = 64 * 1024;
+const STREAM_ACK_WINDOW: usize = 4;
 
 const BUILTIN_ORIGINS: &[&str] = &[
     "https://api.openai.com:443",
@@ -61,6 +63,7 @@ pub struct ApiOriginState {
     load_lock: AsyncMutex<()>,
     concurrency: Semaphore,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
+    stream_acks: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl Default for ApiOriginState {
@@ -72,6 +75,7 @@ impl Default for ApiOriginState {
             load_lock: AsyncMutex::new(()),
             concurrency: Semaphore::new(MAX_CONCURRENT_REQUESTS),
             cancellations: Mutex::new(HashMap::new()),
+            stream_acks: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -145,6 +149,43 @@ fn cleanup_cancellation(state: &ApiOriginState, request_id: &str) {
     if let Ok(mut cancellations) = state.cancellations.lock() {
         cancellations.remove(request_id);
     }
+}
+
+fn register_stream_ack_window(
+    state: &ApiOriginState,
+    request_id: &str,
+) -> Result<Arc<Semaphore>, ApiHttpError> {
+    let window = Arc::new(Semaphore::new(STREAM_ACK_WINDOW));
+    state
+        .stream_acks
+        .lock()
+        .map_err(|_| ApiHttpError::new("STREAM_STATE_UNAVAILABLE", "流式响应状态不可用"))?
+        .insert(request_id.to_owned(), window.clone());
+    Ok(window)
+}
+
+fn cleanup_stream_ack_window(state: &ApiOriginState, request_id: &str) {
+    if let Ok(mut streams) = state.stream_acks.lock() {
+        streams.remove(request_id);
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn acknowledge_external_http_stream(
+    state: State<'_, ApiOriginState>,
+    request_id: String,
+) -> Result<bool, ApiHttpError> {
+    let streams = state
+        .stream_acks
+        .lock()
+        .map_err(|_| ApiHttpError::new("STREAM_STATE_UNAVAILABLE", "流式响应状态不可用"))?;
+    let Some(window) = streams.get(&request_id) else {
+        return Ok(false);
+    };
+    if window.available_permits() < STREAM_ACK_WINDOW {
+        window.add_permits(1);
+    }
+    Ok(true)
 }
 
 fn cancelled_error() -> ApiHttpError {
@@ -681,6 +722,13 @@ pub async fn external_http_stream(
     ensure_loaded(&app, &state).await?;
     let request_id = request.request_id.clone();
     let cancellation = register_cancellation(&state, &request_id)?;
+    let ack_window = match register_stream_ack_window(&state, &request_id) {
+        Ok(window) => window,
+        Err(error) => {
+            cleanup_cancellation(&state, &request_id);
+            return Err(error);
+        }
+    };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<ApiOriginState>();
@@ -717,13 +765,21 @@ pub async fn external_http_stream(
                         "响应体超过 16 MiB 限制",
                     ));
                 }
-                if on_event
-                    .send(ExternalHttpStreamEvent::Chunk {
-                        data: chunk.to_vec(),
-                    })
-                    .is_err()
-                {
-                    return Ok(());
+                for batch in chunk.chunks(STREAM_BATCH_BYTES) {
+                    let permit = tokio::select! {
+                        _ = cancellation.cancelled() => return Err(cancelled_error()),
+                        permit = ack_window.acquire() => permit
+                            .map_err(|_| ApiHttpError::new("STREAM_STATE_UNAVAILABLE", "流式响应状态不可用"))?,
+                    };
+                    permit.forget();
+                    if on_event
+                        .send(ExternalHttpStreamEvent::Chunk {
+                            data: batch.to_vec(),
+                        })
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
                 }
             }
             let _ = on_event.send(ExternalHttpStreamEvent::End);
@@ -734,6 +790,7 @@ pub async fn external_http_stream(
             let _ = on_event.send(ExternalHttpStreamEvent::Error { error });
         }
         cleanup_cancellation(&state, &request_id);
+        cleanup_stream_ack_window(&state, &request_id);
     });
     Ok(())
 }
@@ -956,5 +1013,34 @@ mod tests {
         cleanup_cancellation(&state, request_id);
         assert!(state.cancellations.lock().unwrap().is_empty());
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stream_ack_window_is_bounded_and_cancellation_unblocks_waiter() {
+        let state = ApiOriginState::default();
+        let request_id = "backpressure-test";
+        let cancellation = register_cancellation(&state, request_id).unwrap();
+        let window = register_stream_ack_window(&state, request_id).unwrap();
+
+        for _ in 0..STREAM_ACK_WINDOW {
+            window.acquire().await.unwrap().forget();
+        }
+        assert_eq!(window.available_permits(), 0);
+
+        let blocked_window = window.clone();
+        let blocked_cancellation = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            tokio::select! {
+                _ = blocked_cancellation.cancelled() => "cancelled",
+                _ = blocked_window.acquire() => "acquired",
+            }
+        });
+        tokio::task::yield_now().await;
+        cancellation.cancel();
+        assert_eq!(waiter.await.unwrap(), "cancelled");
+
+        cleanup_stream_ack_window(&state, request_id);
+        cleanup_cancellation(&state, request_id);
+        assert!(state.stream_acks.lock().unwrap().is_empty());
     }
 }

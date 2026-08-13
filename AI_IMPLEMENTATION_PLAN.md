@@ -5,15 +5,15 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 11｜端到端有界背压
+- 当前阶段：阶段 14｜结论级来源引用
 - 阶段状态：未开始
-- 上次执行结果：阶段 8–10 已完成；结构化 Embedding 与同标题邻居装箱、Rust 原生请求取消、Agent 全局 deadline 已实现并通过隔离桌面验收
-- 验证结果：RAG 19/19、Agent 14/14、HTTP Rust 8/8；RAG index/query/eval、runtime schema、typecheck、定向 ESLint、Rust fmt/RAG、desktop build、`git diff --check` 通过；隔离 Tauri 中流取消与 100ms deadline 通过
-- 本阶段剩余：先采集文本流和高速本地模型基线，再判断阶段 11 是否只建立契约与压力测试
-- 本阶段允许修改：按阶段 11 实施前核实精确文件范围
+- 上次执行结果：阶段 11–13 已完成；HTTP 有界背压、RAG 性能档位调度、Reference/Footnote/HTML 跨块语义虚拟化已实现并通过隔离桌面验收
+- 验证结果：HTTP Rust 9/9、RAG Rust 5/5（1 项真实用户库测试按设计忽略）、Markdown 48/48、RAG 调度 3/3；AI HTTP、app warmup、typecheck、定向 ESLint、Rust fmt、desktop build、`git diff --check` 通过；隔离 Tauri 高速流、性能调度和三类长文 Markdown 验收通过
+- 本阶段剩余：完成阶段 14 全部任务
+- 本阶段允许修改：按阶段 14 实施前核实精确文件范围
 - 阻塞问题：无
-- 下一阶段：阶段 12｜RAG 性能档位调度
-- Git 状态：分支 `codex/defect-capability-fixes`；阶段 8–10 任务文件纳入本次本地提交，未推送
+- 下一阶段：阶段 15｜路由与 Prompt 评测闭环
+- Git 状态：分支 `codex/defect-capability-fixes`；阶段 11–13 任务文件纳入本次本地提交，未推送
 
 ## 项目目标
 
@@ -192,38 +192,36 @@
 
 ### 目标
 
-只完成 HTTP-02：先采集文本流与高速本地模型的实际吞吐和缓冲基线；达到风险门槛时再实现 Rust 上游流、Tauri Channel 与前端 ReadableStream 的有界缓冲、批次、ACK 窗口和慢消费者策略。
+只完成 SOURCE-01：为本轮真实工具结果分配稳定来源 ID，校验回答中的引用并支持定位到文件行号或网页。
 
 ### 允许修改
 
-- `src/services/externalHttp.ts`、`src-tauri/src/api_http.rs` 与 AI HTTP 压力定向测试（实施前按实测冻结精确范围）
-- SSE 解析直接测试（仅用于证明现有接口兼容）
+- Agent/Direct 来源协议、运行时解码、回答渲染与来源打开、直接测试
 - `AI_IMPLEMENTATION_PLAN.md`
 
 ### 实施任务
 
-1. 采集匿名文本流和高速本地模型的吞吐、峰值缓冲与慢消费者基线。
-2. 根据基线冻结缓冲字节上限、批次、ACK 窗口、慢消费者降级与终止契约。
-3. 若实际流量达到风险门槛，实施最小有界背压；否则只保留契约与压力回归，不增加运行时代码。
-4. 验证取消、超时和慢消费者不会死锁，现有 SSE 解析接口保持兼容。
+1. 冻结本轮来源 ID、引用校验和旧回答来源兼容契约。
+2. 将 Direct 与 Agent 真实工具结果映射为稳定来源，拒绝模型生成的未知来源 ID。
+3. 渲染已采用来源并支持打开本地文件行号或网页。
+4. 验证无来源回答不显示占位，旧回答级来源继续兼容。
 
 ### 验收标准
 
-- [ ] 基线记录文本流与高速本地模型的吞吐、峰值缓冲和慢消费者行为。
-- [ ] 缓冲字节数有硬上限，取消和超时不会死锁。
-- [ ] 慢消费者按冻结契约降级或终止，现有 SSE 解析接口保持兼容。
-- [ ] AI HTTP 压力定向测试、Rust 定向测试、desktop build、隔离 Tauri 高速流验收与 diff 检查通过。
+- [ ] 引用 ID 只来自本轮真实工具结果，未知 ID 不展示为已采用来源。
+- [ ] 本地来源可定位文件行号，网页来源可安全打开。
+- [ ] 旧回答级来源继续兼容，无来源回答不显示占位。
+- [ ] reading quality/source/AI panel 定向测试、runtime schema、typecheck、desktop build、隔离 Tauri 来源跳转验收与 diff 检查通过。
 
 ### 检查命令
 
-在阶段 11 采集基线并冻结精确调用链后回填，至少包含 AI HTTP 压力定向测试、Rust 定向测试、desktop build、隔离 Tauri 高速流验收和 `git diff --check`。
+按阶段 14 冻结精确调用链后回填，至少包含 reading quality/source/AI panel 定向测试、runtime schema、typecheck、desktop build、隔离 Tauri 来源跳转验收和 `git diff --check`。
 
 ### 禁止事项
 
-- 不在没有实测风险时引入复杂 ACK 协议或重构整个传输层。
-- 不改变 Origin、DNS/IP、重定向和 Web 能力安全边界。
-- 不破坏现有 SSE 解析与 Provider 接口。
-- 不提前实施阶段 12 的性能档位调度。
+- 不自动生成不存在的引用或修改旧聊天正文。
+- 不把未引用候选展示为已采用来源。
+- 不提前实施阶段 15 的路由与 Prompt 评测。
 - 不修改或夹带已有无关工作区文件。
 - 不自动提交、推送、打 tag、创建 Release 或 PR。
 
@@ -297,6 +295,27 @@
 - 状态：已完成
 - 完成内容：默认 120 秒整次 deadline 覆盖模型和工具调用，局部工具超时按剩余时间收敛；deadline 后不再启动新调用，基于已有证据生成声明缺失信息的降级综合；写入和确认工具不自动重试
 - 验证结果：Agent 定向 14/14、typecheck、定向 ESLint 0 error（4 个既有 warning）、desktop build 通过；隔离 Tauri 匿名假模型 100ms deadline 返回稳定 `deadline` 终态
+- 遗留问题：无
+
+### 阶段 11｜端到端有界背压
+
+- 状态：已完成
+- 完成内容：匿名高速流基线确认原链路只有 16 MiB 总量限制、无在途上限；Rust 按 64 KiB 批次和 4 批 ACK 窗口限制在途数据为 256 KiB，前端按 ReadableStream 拉取消费并 ACK，取消可打断窗口等待
+- 验证结果：AI HTTP 传输与 SSE 兼容检查通过，Rust HTTP 9/9、typecheck、Rust fmt、desktop build、`git diff --check` 通过；隔离 Tauri 慢消费者读取 1,072,142 bytes / 519 批次，用时 2,613ms，无死锁
+- 遗留问题：无
+
+### 阶段 12｜RAG 性能档位调度
+
+- 状态：已完成
+- 完成内容：节省内存保持按需；平衡/极速按知识库规模、可用内存和 7 天近期使用决定闲时预热；用户输入、切文档和内存压力取消前端等待并调用 Rust CancellationToken 终止初始化，不增加主动释放
+- 验证结果：RAG 调度 3/3、app warmup、Rust RAG 5/5（1 项真实用户库测试按设计忽略）、typecheck、Rust fmt、desktop build 通过；隔离 Tauri 空知识库 8ms 跳过预热且索引保持 idle
+- 遗留问题：无
+
+### 阶段 13｜跨块 Markdown 语义虚拟化
+
+- 状态：已完成
+- 完成内容：Reference 定义注入可视块解析上下文；Footnote 共享定义并只渲染一个脚注区；自包含 HTML 按块虚拟化，跨块未闭合 HTML 保留整篇同步兼容；目录、定位、编辑 offset 与高度模型沿用原链路
+- 验证结果：Markdown 定向 48/48、typecheck、定向 ESLint、desktop build、`git diff --check` 通过，构建无预览 Worker；隔离 Tauri 中 Reference 18 块、Footnote 11 块且唯一脚注区、自包含 HTML 18 块，跨块 HTML 保持 whole 模式
 - 遗留问题：无
 
 ## 新窗口执行提示词

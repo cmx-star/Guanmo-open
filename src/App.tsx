@@ -167,7 +167,16 @@ function scheduleIdleWarmup(): void {
   )
 
   // 向量库延迟加载：不在启动时预热，首次使用 RAG 时才加载
-  // RAG 全量向量仅在首次检索时由 Rust 后台索引服务按需加载
+  // 性能档位允许时，仅在首屏后闲时预热；用户活动、切文档或内存压力会取消。
+  scheduleIdleTask(
+    'rag-index-warmup',
+    async () => {
+      const { warmNativeRagIndexWhileIdle } = await import('./services/rag/warmupScheduler')
+      await warmNativeRagIndexWhileIdle()
+    },
+    3,
+    'RAG 索引预热',
+  )
 
   // AI 状态校验：完全异步，不阻塞任何操作
   setTimeout(() => {

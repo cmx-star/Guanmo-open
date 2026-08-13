@@ -11,6 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, State};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,6 +53,7 @@ struct IndexControl {
 pub struct RagIndexService {
     control: Mutex<IndexControl>,
     notify: tokio::sync::Notify,
+    initialization_cancellation: Mutex<Option<CancellationToken>>,
 }
 
 #[derive(Clone, Debug)]
@@ -442,6 +444,7 @@ async fn apply_pending_changes(
 async fn initialize_internal(
     app: &AppHandle,
     service: &RagIndexService,
+    cancellation: &CancellationToken,
 ) -> Result<RagIndexStateResponse, String> {
     loop {
         let should_initialize = {
@@ -468,12 +471,16 @@ async fn initialize_internal(
         }
 
         let result: Result<RagIndexStateResponse, String> = async {
+            if cancellation.is_cancelled() {
+                return Err("RAG index initialization cancelled".to_string());
+            }
             let pool = open_readonly_pool(database_path(app)?).await?;
             let (documents, chunks) = load_raw_index(&pool, true).await?;
-            let (index, skipped) =
-                tauri::async_runtime::spawn_blocking(move || build_index(documents, chunks))
-                    .await
-                    .map_err(|error| error.to_string())?;
+            let build = tauri::async_runtime::spawn_blocking(move || build_index(documents, chunks));
+            let (index, skipped) = tokio::select! {
+                _ = cancellation.cancelled() => return Err("RAG index initialization cancelled".to_string()),
+                result = build => result.map_err(|error| error.to_string())?,
+            };
             {
                 let mut control = service
                     .control
@@ -494,9 +501,13 @@ async fn initialize_internal(
 
         if let Err(error) = &result {
             if let Ok(mut control) = service.control.lock() {
-                control.status = IndexStatus::Failed;
+                control.status = if cancellation.is_cancelled() {
+                    IndexStatus::Idle
+                } else {
+                    IndexStatus::Failed
+                };
                 control.index = None;
-                control.error = Some(error.clone());
+                control.error = (!cancellation.is_cancelled()).then(|| error.clone());
             }
         }
         service.notify.notify_waiters();
@@ -520,7 +531,35 @@ pub async fn initialize_rag_index(
     app: AppHandle,
     state: State<'_, RagIndexService>,
 ) -> Result<RagIndexStateResponse, String> {
-    initialize_internal(&app, state.inner()).await
+    let cancellation = {
+        let mut active = state
+            .initialization_cancellation
+            .lock()
+            .map_err(|_| "RAG index initialization state poisoned".to_string())?;
+        active.get_or_insert_with(CancellationToken::new).clone()
+    };
+    let result = initialize_internal(&app, state.inner(), &cancellation).await;
+    if let Ok(mut active) = state.initialization_cancellation.lock() {
+        *active = None;
+    }
+    result
+}
+
+#[tauri::command]
+pub fn cancel_rag_index_initialization(state: State<'_, RagIndexService>) -> Result<bool, String> {
+    cancel_active_initialization(state.inner())
+}
+
+fn cancel_active_initialization(state: &RagIndexService) -> Result<bool, String> {
+    let active = state
+        .initialization_cancellation
+        .lock()
+        .map_err(|_| "RAG index initialization state poisoned".to_string())?;
+    let Some(cancellation) = active.as_ref() else {
+        return Ok(false);
+    };
+    cancellation.cancel();
+    Ok(true)
 }
 
 async fn refresh_ready_index(
@@ -990,7 +1029,10 @@ pub async fn search_rag_index(
             .await
             .map_err(|error| error.to_string());
     }
-    if initialize_internal(&app, state.inner()).await.is_err() {
+    if initialize_internal(&app, state.inner(), &CancellationToken::new())
+        .await
+        .is_err()
+    {
         // Initialization failure must not block an answer. Retry a lightweight
         // keyword-only load; the failed state is retained so a later call can retry.
         let pool = open_readonly_pool(database_path(&app)?).await?;
@@ -1023,6 +1065,17 @@ pub async fn search_rag_index(
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn active_initialization_can_be_cancelled_idempotently() {
+        let service = RagIndexService::default();
+        let token = CancellationToken::new();
+        *service.initialization_cancellation.lock().unwrap() = Some(token.clone());
+        assert!(cancel_active_initialization(&service).unwrap());
+        assert!(token.is_cancelled());
+        *service.initialization_cancellation.lock().unwrap() = None;
+        assert!(!cancel_active_initialization(&service).unwrap());
+    }
 
     #[test]
     fn invalid_and_mismatched_vectors_are_skipped() {

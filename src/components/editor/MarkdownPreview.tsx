@@ -17,11 +17,14 @@ import { InlineMarkdownBlockEditor } from './InlineMarkdownBlockEditor'
 
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkStandaloneDisplayMath]
 const MARKDOWN_REHYPE_PLUGINS = [rehypeKatex, rehypeHighlight]
-const EMBEDDED_HTML_PATTERN = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*|\/?)>/
+const EMBEDDED_HTML_PATTERN = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\s*\/?>/
+const HTML_VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 type RehypePlugins = NonNullable<Options['rehypePlugins']>
 let markdownHtmlPluginsPromise: Promise<RehypePlugins> | null = null
 
 const BlockLineBaseContext = createContext<number>(0)
+const FootnoteSectionContext = createContext(true)
+const FootnoteReferenceSuffixContext = createContext<string | null>(null)
 function useBlockLineBase(): number {
   return useContext(BlockLineBaseContext)
 }
@@ -30,6 +33,23 @@ function loadMarkdownHtmlPlugins(): Promise<RehypePlugins> {
   markdownHtmlPluginsPromise ??= import('@/services/markdownHtml')
     .then(({ MARKDOWN_HTML_REHYPE_PLUGINS }) => MARKDOWN_HTML_REHYPE_PLUGINS)
   return markdownHtmlPluginsPromise
+}
+
+function hasCrossBlockHtml(content: string): boolean {
+  return content.split(/\r?\n\s*\r?\n/).some((source) => {
+    const tokens = (source.match(/<[^>]+>/g) ?? []).filter((token) =>
+      /^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s|\/?>)/.test(token)
+    )
+    const opening = tokens
+      .filter((token) => token[1] !== '/' && !/\/\s*>$/.test(token))
+      .filter((token) => {
+        const tag = token.replace(/^<\/?/, '').split(/[\s/>]/, 1)[0].toLowerCase()
+        return tag && !HTML_VOID_TAGS.has(tag)
+      })
+      .length
+    const closing = tokens.filter((token) => token[1] === '/').length
+    return opening !== closing
+  })
 }
 
 export interface MarkdownBlockCommitRequest {
@@ -98,6 +118,8 @@ interface StableMarkdownContentProps {
   rehypePlugins: Options['rehypePlugins']
   components: Partial<Components>
   baseLine: number
+  renderFootnoteSection?: boolean
+  footnoteReferenceSuffix?: string
 }
 
 const StableMarkdownContent = memo(function StableMarkdownContent({
@@ -106,17 +128,23 @@ const StableMarkdownContent = memo(function StableMarkdownContent({
   rehypePlugins,
   components,
   baseLine,
+  renderFootnoteSection = true,
+  footnoteReferenceSuffix,
 }: StableMarkdownContentProps) {
   return (
     <BlockLineBaseContext.Provider value={baseLine}>
-      <ReactMarkdown
-        skipHtml={skipHtml}
-        remarkPlugins={MARKDOWN_REMARK_PLUGINS}
-        rehypePlugins={rehypePlugins}
-        components={components}
-      >
-        {markdown}
-      </ReactMarkdown>
+      <FootnoteSectionContext.Provider value={renderFootnoteSection}>
+        <FootnoteReferenceSuffixContext.Provider value={footnoteReferenceSuffix ?? null}>
+          <ReactMarkdown
+            skipHtml={skipHtml}
+            remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+            rehypePlugins={rehypePlugins}
+            components={components}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </FootnoteReferenceSuffixContext.Provider>
+      </FootnoteSectionContext.Provider>
     </BlockLineBaseContext.Provider>
   )
 })
@@ -190,10 +218,20 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   const displayedContent = activeEdit?.contentSnapshot ?? optimisticContent?.content ?? content
   const model = useMemo(() => createMarkdownPreviewModel(displayedContent), [displayedContent])
   const normalizedContent = model.normalizedContent
+  const referenceDefinitionSource = useMemo(
+    () => model.definitions.map((definition) => definition.rawSource).join('\n'),
+    [model.definitions],
+  )
+  const footnoteDefinitionSource = useMemo(
+    () => model.footnoteDefinitions.map((definition) => definition.rawSource).join('\n\n'),
+    [model.footnoteDefinitions],
+  )
+  const footnoteSectionOwnerIndex = useMemo(
+    () => model.blocks.findIndex((block) => block.type !== 'footnoteDefinition' && /\[\^[^\]]+\]/.test(block.rawSource)),
+    [model.blocks],
+  )
   const hasEmbeddedHtml = useMemo(() => EMBEDDED_HTML_PATTERN.test(normalizedContent), [normalizedContent])
-  const requiresWholeDocumentRender = hasEmbeddedHtml
-    || model.definitions.length > 0
-    || model.footnoteDefinitions.length > 0
+  const requiresWholeDocumentRender = hasCrossBlockHtml(normalizedContent)
   const [htmlRehypePlugins, setHtmlRehypePlugins] = useState<RehypePlugins | null>(null)
   const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null)
   const themeId = useSettingsStore((state) => state.appearance.themeId)
@@ -705,6 +743,13 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     }
 
     return {
+          section: ({ children, node, ...props }) => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const renderFootnotes = useContext(FootnoteSectionContext)
+            if ('data-footnotes' in props && !renderFootnotes) return null
+            void node
+            return <section {...props}>{children}</section>
+          },
           div: ({ children, node, ...props }) => {
             void node
             return <div {...props}>{children}</div>
@@ -815,16 +860,26 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
             )
           },
           a: ({ href, children, node: _node, ...props }) => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const footnoteSuffix = useContext(FootnoteReferenceSuffixContext)
             const isHashLink = href?.startsWith('#')
             const isFootnoteBackref = 'data-footnote-backref' in props
+            const isFootnoteReference = 'data-footnote-ref' in props
+            const anchorId = isFootnoteReference && footnoteSuffix && typeof props.id === 'string'
+              ? `${props.id}-${footnoteSuffix}`
+              : props.id
+            const anchorHref = isFootnoteBackref && footnoteSuffix && href?.startsWith('#')
+              ? `${href}-${footnoteSuffix}`
+              : href
             return (
               <a
-                href={href}
+                {...props}
+                id={anchorId}
+                href={anchorHref}
                 className="text-gm-primary hover:underline font-bold transition-colors hover:text-gm-primary-hover"
                 target={isHashLink ? undefined : '_blank'}
                 rel={isHashLink ? undefined : 'noopener noreferrer'}
-                onClick={handleAnchorClick(href)}
-                {...props}
+                onClick={handleAnchorClick(anchorHref)}
               >
                 {isFootnoteBackref ? (children && String(children).trim() ? children : '↩ 返回正文') : children}
               </a>
@@ -940,6 +995,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   return (
     <div
       ref={rootRef}
+      data-md-render-mode={requiresWholeDocumentRender ? 'whole' : 'virtual'}
       className="prose gm-markdown-preview max-w-none min-w-0 text-gm-text"
       style={{ fontSize: `${fontSize}px`, lineHeight, position: 'relative' }}
       onPointerDownCapture={handlePointerDownCapture}
@@ -959,6 +1015,12 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
         <div style={{ position: 'relative', height: visible.totalHeight, minHeight: visible.totalHeight > 0 ? undefined : '100%' }}>
           {model.blocks.slice(visible.startIndex, visible.endIndex).map((block, index) => {
             const globalIndex = visible.startIndex + index
+            const isFootnoteDefinition = block.type === 'footnoteDefinition'
+            const footnoteContext = isFootnoteDefinition
+              ? footnoteDefinitionSource
+              : footnoteDefinitionSource
+                ? `${footnoteDefinitionSource}\n\n<!-- guanmo-footnote-context -->`
+                : ''
             return (
               <StableMarkdownBlock
                 key={block.blockId}
@@ -967,7 +1029,9 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
                 top={visible.blockTops[globalIndex]}
                 onElement={setBlockElement}
                 baseLine={block.startLine - 1}
-                markdown={normalizedContent.slice(block.normalizedStartOffset, block.normalizedEndOffset)}
+                renderFootnoteSection={globalIndex === footnoteSectionOwnerIndex}
+                footnoteReferenceSuffix={`block-${globalIndex}`}
+                markdown={`${isFootnoteDefinition ? '' : normalizedContent.slice(block.normalizedStartOffset, block.normalizedEndOffset)}${referenceDefinitionSource ? `\n\n${referenceDefinitionSource}` : ''}${footnoteContext ? `\n\n${footnoteContext}` : ''}`}
                 skipHtml={skipHtml || (hasEmbeddedHtml && !htmlRehypePlugins)}
                 rehypePlugins={rehypePlugins}
                 components={components}

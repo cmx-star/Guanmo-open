@@ -40,6 +40,7 @@ const sessionOrigins = new Set<string>()
 const persistedOrigins = new Set<string>()
 const requests: Array<{ requestId: string; url: string; method: string; headers: [string, string][]; body?: number[]; timeoutMs?: number }> = []
 const cancelledRequestIds = new Set<string>()
+const acknowledgedRequestIds: string[] = []
 let rejectedReasoningRequests = 0
 
 function originOf(value: string) {
@@ -86,6 +87,10 @@ function responseBody(url: string, body?: number[]) {
 }
 
 runtime.__TAURI_INVOKE__ = async (command, args = {}) => {
+  if (command === 'acknowledge_external_http_stream') {
+    acknowledgedRequestIds.push(args.requestId as string)
+    return true
+  }
   if (command === 'cancel_external_http_request') {
     cancelledRequestIds.add(args.requestId as string)
     return true
@@ -212,6 +217,7 @@ assert(chat.content === '完成', '非流式对话应经过 Rust 代理')
 let streamed = ''
 for await (const chunk of provider.streamChat({ messages: [{ role: 'user', content: 'hi' }] })) streamed += chunk.content
 assert(streamed === '流式', '流式对话应通过 Channel 保持 SSE 解析')
+assert(acknowledgedRequestIds.length > 0, '前端消费流式批次后必须向 Rust ACK 释放有界窗口')
 
 const reasoningProvider = new OpenAICompatibleProvider({
   ...config,
