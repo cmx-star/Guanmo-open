@@ -23,6 +23,7 @@ tauri-plugin-single-instance = "2"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "sync"] }
+tokio-util = "0.7"
 url = "2"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tauri-plugin-notification = "2.3.3"

@@ -5,15 +5,15 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 8｜结构化 Embedding 与邻居扩展
+- 当前阶段：阶段 11｜端到端有界背压
 - 阶段状态：未开始
-- 上次执行结果：阶段 6、7 已完成；Direct、Agent、最终综合回答共享统一总预算与一次安全降级，匿名 RAG 固定评测集和 baseline runner 已建立
-- 验证结果：阶段 6 定向测试 25/25、selection/runtime schema、typecheck、desktop build、匿名隔离 Tauri 长对话通过；阶段 7 六项质量指标 1.0、无答案误召回率 0、RAG query 通过；定向 ESLint 0 error（3 个既有 warning）；`git diff --check` 通过
-- 本阶段剩余：先对照阶段 7 baseline 冻结结构化 Embedding 输入版本和邻居边界，再实施阶段 8
-- 本阶段允许修改：按阶段 8 实施前核实精确文件范围
+- 上次执行结果：阶段 8–10 已完成；结构化 Embedding 与同标题邻居装箱、Rust 原生请求取消、Agent 全局 deadline 已实现并通过隔离桌面验收
+- 验证结果：RAG 19/19、Agent 14/14、HTTP Rust 8/8；RAG index/query/eval、runtime schema、typecheck、定向 ESLint、Rust fmt/RAG、desktop build、`git diff --check` 通过；隔离 Tauri 中流取消与 100ms deadline 通过
+- 本阶段剩余：先采集文本流和高速本地模型基线，再判断阶段 11 是否只建立契约与压力测试
+- 本阶段允许修改：按阶段 11 实施前核实精确文件范围
 - 阻塞问题：无
-- 下一阶段：阶段 9｜Rust 原生请求取消
-- Git 状态：分支 `codex/defect-capability-fixes`；未提交、未推送
+- 下一阶段：阶段 12｜RAG 性能档位调度
+- Git 状态：分支 `codex/defect-capability-fixes`；阶段 8–10 任务文件纳入本次本地提交，未推送
 
 ## 项目目标
 
@@ -192,41 +192,38 @@
 
 ### 目标
 
-只完成 RAG-06、RAG-07：将文档标题、标题路径和块类型纳入版本化 Embedding 输入，并在阶段 7 baseline 不回退的前提下，于剩余预算内扩展同文档相邻证据。
+只完成 HTTP-02：先采集文本流与高速本地模型的实际吞吐和缓冲基线；达到风险门槛时再实现 Rust 上游流、Tauri Channel 与前端 ReadableStream 的有界缓冲、批次、ACK 窗口和慢消费者策略。
 
 ### 允许修改
 
-- Embedding 预处理版本、渐进重建与直接测试（实施前按实际调用链冻结精确范围）
-- RAG 检索结果邻居装箱及直接测试（仅限剩余预算内扩展）
-- 阶段 7 匿名评测 Fixture 与 runner（仅用于证明指标不回退或补充目标场景）
+- `src/services/externalHttp.ts`、`src-tauri/src/api_http.rs` 与 AI HTTP 压力定向测试（实施前按实测冻结精确范围）
+- SSE 解析直接测试（仅用于证明现有接口兼容）
 - `AI_IMPLEMENTATION_PLAN.md`
 
 ### 实施任务
 
-1. 冻结文档标题、标题路径、块类型的版本化 Embedding 输入格式，以及旧向量兼容和渐进重建条件。
-2. 实施结构化 Embedding 输入，确保标题变化和预处理版本变化只触发必要重建。
-3. 在统一上下文剩余预算内扩展同文档相邻证据，禁止跨越不相关标题边界或重复装箱。
-4. 将扩展证据标记为 `neighbor-context`，保持原 TopK、排序、来源元数据和旧结果兼容。
-5. 使用阶段 7 baseline 与目标场景验证指标不回退且目标场景有收益，再更新状态与阶段历史。
+1. 采集匿名文本流和高速本地模型的吞吐、峰值缓冲与慢消费者基线。
+2. 根据基线冻结缓冲字节上限、批次、ACK 窗口、慢消费者降级与终止契约。
+3. 若实际流量达到风险门槛，实施最小有界背压；否则只保留契约与压力回归，不增加运行时代码。
+4. 验证取消、超时和慢消费者不会死锁，现有 SSE 解析接口保持兼容。
 
 ### 验收标准
 
-- [ ] 旧向量继续可读，结构化输入按版本渐进重建，标题变化触发正确重建。
-- [ ] 邻居扩展只使用剩余预算，不跨不相关标题边界、不重复，并标记为 `neighbor-context`。
-- [ ] 原 TopK、检索排序、来源元数据和完整语义 Chunk 保持兼容。
-- [ ] 阶段 7 baseline 指标不回退，至少一个匿名目标场景证明邻居扩展收益。
-- [ ] RAG index/query/eval、runtime schema、typecheck、Rust 定向测试与 diff 检查通过。
+- [ ] 基线记录文本流与高速本地模型的吞吐、峰值缓冲和慢消费者行为。
+- [ ] 缓冲字节数有硬上限，取消和超时不会死锁。
+- [ ] 慢消费者按冻结契约降级或终止，现有 SSE 解析接口保持兼容。
+- [ ] AI HTTP 压力定向测试、Rust 定向测试、desktop build、隔离 Tauri 高速流验收与 diff 检查通过。
 
 ### 检查命令
 
-在阶段 8 冻结精确调用链后回填，至少包含 RAG index/query/eval、runtime schema、typecheck、Rust 定向测试和 `git diff --check`。
+在阶段 11 采集基线并冻结精确调用链后回填，至少包含 AI HTTP 压力定向测试、Rust 定向测试、desktop build、隔离 Tauri 高速流验收和 `git diff --check`。
 
 ### 禁止事项
 
-- 不在 baseline 无收益或回退时调整检索权重、阈值或引入 reranker。
-- 不要求用户清库或一次性重建全部旧向量。
-- 不跨不相关标题边界扩展邻居，不重复或静默截断完整语义 Chunk。
-- 不新增无关依赖，不重构整个聊天或 Agent 架构。
+- 不在没有实测风险时引入复杂 ACK 协议或重构整个传输层。
+- 不改变 Origin、DNS/IP、重定向和 Web 能力安全边界。
+- 不破坏现有 SSE 解析与 Provider 接口。
+- 不提前实施阶段 12 的性能档位调度。
 - 不修改或夹带已有无关工作区文件。
 - 不自动提交、推送、打 tag、创建 Release 或 PR。
 
@@ -280,6 +277,27 @@
 - 完成内容：新增匿名固定问题—证据集、内存评测 runner、JSON 指标输出和基线说明；固定现有关键词、向量融合、阈值和多文档多样化逻辑
 - 验证结果：Recall@3、MRR、NDCG@3、来源准确率、groundedness 均为 1.0，无答案误召回率为 0；冷/热延迟可重复记录；`npm run test:rag-query` 与 `git diff --check` 通过
 - 遗留问题：当前 Fixture 为最小确定性基线，后续质量能力应按真实匿名失败场景增量扩充，不得读取用户数据
+
+### 阶段 8｜结构化 Embedding 与邻居扩展
+
+- 状态：已完成
+- 完成内容：Embedding v3 将文档标题、标题路径、块类型和正文纳入确定性输入；旧向量按文档触达渐进重建；Rust 为 TopK 主结果附带同文档同标题路径相邻块，前端仅用剩余预算去重装箱并标记 `neighbor-context`
+- 验证结果：RAG 定向 19/19、index/query/eval、runtime schema、typecheck、Rust RAG 与 desktop build 通过；baseline 六项质量指标保持 1.0，邻居目标场景收益为 1.0
+- 遗留问题：无
+
+### 阶段 9｜Rust 原生请求取消
+
+- 状态：已完成
+- 完成内容：前端为每次请求生成 requestId；AbortSignal 与 ReadableStream cancel 调用幂等 Rust 取消命令；CancellationToken 覆盖并发等待、reqwest 发送和响应读取，所有终态清理注册表
+- 验证结果：AI HTTP 传输检查、Rust HTTP 8/8、typecheck、desktop build 通过；隔离 Tauri 流读取首块后取消得到 AbortError，本地匿名服务确认连接关闭
+- 遗留问题：无
+
+### 阶段 10｜Agent 全局 deadline
+
+- 状态：已完成
+- 完成内容：默认 120 秒整次 deadline 覆盖模型和工具调用，局部工具超时按剩余时间收敛；deadline 后不再启动新调用，基于已有证据生成声明缺失信息的降级综合；写入和确认工具不自动重试
+- 验证结果：Agent 定向 14/14、typecheck、定向 ESLint 0 error（4 个既有 warning）、desktop build 通过；隔离 Tauri 匿名假模型 100ms deadline 返回稳定 `deadline` 终态
+- 遗留问题：无
 
 ## 新窗口执行提示词
 

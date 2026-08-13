@@ -95,4 +95,28 @@ describe('RAG context packing', () => {
     ])
     expect(packed.coverage).toEqual({ requested: 2, included: 0, skipped: 2 })
   })
+
+  it('packs deduplicated same-heading neighbors only from remaining budget', () => {
+    const result = createResult(1, '主证据')
+    result.chunk.titlePath = ['同一章节']
+    result.neighborChunks = [
+      { ...result.chunk, id: 'neighbor-before', index: 0, content: '前置解释', contextRole: 'neighbor-context' },
+      { ...result.chunk, id: 'neighbor-after', index: 2, content: '后续结论', contextRole: 'neighbor-context' },
+      { ...result.chunk, id: result.chunk.id, content: '不得重复', contextRole: 'neighbor-context' },
+    ]
+    const full = buildContextResult([result], Number.MAX_SAFE_INTEGER)
+
+    expect(full.text).toContain('[neighbor-context]')
+    expect(full.text).toContain('前置解释')
+    expect(full.text).toContain('后续结论')
+    expect(full.text).not.toContain('不得重复')
+    expect(full.includedSources).toHaveLength(1)
+
+    const mainOnly = createResult(1, '主证据')
+    mainOnly.chunk.titlePath = ['同一章节']
+    const mainBudget = buildContextResult([mainOnly], Number.MAX_SAFE_INTEGER).text.length
+    const constrained = buildContextResult([result], mainBudget)
+    expect(constrained.text).toContain('主证据')
+    expect(constrained.text).not.toContain('[neighbor-context]')
+  })
 })

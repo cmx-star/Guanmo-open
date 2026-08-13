@@ -50,7 +50,7 @@ export interface AgentStep {
   progressStage?: AgentProgressStage
 }
 
-export type AgentResultReason = 'completed' | 'max_steps' | 'max_tool_calls' | 'error'
+export type AgentResultReason = 'completed' | 'max_steps' | 'max_tool_calls' | 'deadline' | 'error'
 
 export interface AgentResult {
   answer: string
@@ -75,6 +75,7 @@ export interface AgentConfig {
   maxSteps: number
   maxToolCalls: number
   stepTimeout: number
+  deadlineMs: number
   systemPrompt: string
 }
 

@@ -140,6 +140,7 @@ pub struct RagSearchHit {
     retrieval_mode: &'static str,
     keyword_score: Option<f32>,
     vector_score: Option<f32>,
+    neighbor_chunks: Vec<RagSearchChunk>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -155,6 +156,8 @@ struct RagSearchChunk {
     title_path: Vec<String>,
     heading: Option<String>,
     source_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_role: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -919,6 +922,29 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
         .map(|hit| {
             let chunk = &index.chunks[hit.chunk_index];
             let doc = &index.documents[&chunk.document_id];
+            let neighbor_chunks = index
+                .chunks
+                .iter()
+                .filter(|candidate| {
+                    candidate.document_id == chunk.document_id
+                        && candidate.title_path == chunk.title_path
+                        && candidate.id != chunk.id
+                        && (candidate.index - chunk.index).abs() == 1
+                })
+                .map(|candidate| RagSearchChunk {
+                    id: candidate.id.clone(),
+                    document_id: candidate.document_id.clone(),
+                    content: candidate.content.clone(),
+                    content_hash: candidate.content_hash.clone(),
+                    index: candidate.index,
+                    start_line: candidate.start_line,
+                    end_line: candidate.end_line,
+                    title_path: candidate.title_path.clone(),
+                    heading: candidate.heading.clone(),
+                    source_type: candidate.source_type.clone(),
+                    context_role: Some("neighbor-context"),
+                })
+                .collect();
             RagSearchHit {
                 chunk: RagSearchChunk {
                     id: chunk.id.clone(),
@@ -931,6 +957,7 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
                     title_path: chunk.title_path.clone(),
                     heading: chunk.heading.clone(),
                     source_type: chunk.source_type.clone(),
+                    context_role: None,
                 },
                 document: RagSearchDocument {
                     id: doc.id.clone(),
@@ -942,6 +969,7 @@ fn search_index(index: &RagIndex, request: &RagSearchRequest) -> Vec<RagSearchHi
                 retrieval_mode: hit.retrieval_mode,
                 keyword_score: hit.keyword_score,
                 vector_score: hit.vector_score,
+                neighbor_chunks,
             }
         })
         .collect()

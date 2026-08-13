@@ -1398,6 +1398,7 @@ pub fn run() {
             api_http::revoke_api_origin,
             api_http::external_http_request,
             api_http::external_http_stream,
+            api_http::cancel_external_http_request,
             database_transactions::persist_document_transaction,
             database_transactions::confirm_memory_candidate_transaction,
             database_transactions::import_backup_transaction,

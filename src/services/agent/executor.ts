@@ -58,6 +58,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   maxSteps: 6,
   maxToolCalls: 8,
   stepTimeout: 30000,
+  deadlineMs: 120000,
   systemPrompt: `${BASE_SYSTEM_PROMPT}
 
 ${CONTEXT_SAFETY_PROMPT}
@@ -612,7 +613,7 @@ export function validateSelectionContextReadLevel(completedLevel: 0 | 1 | 2, req
  * Run the agent with a user query.
  * Uses structured JSON tool calling with intent-based tool selection.
  */
-export async function runAgent({
+async function runAgentInternal({
   query,
   chatHistory = [],
   config = {},
@@ -633,7 +634,7 @@ export async function runAgent({
   streamEnabled = true,
   contextWindowTokens = 8192,
   routingDecision,
-}: AgentRunRequest): Promise<AgentResult> {
+}: AgentRunRequest, deadlineAt: number): Promise<AgentResult> {
   initAgent()
 
   if (!isAiReady()) {
@@ -758,6 +759,18 @@ export async function runAgent({
   const calledToolNames: string[] = []
   const selectionContextReadLevels = new Map<string, 1 | 2>()
   const readResultCache = new Map<string, Promise<ToolExecutionResult>>()
+  const remainingDeadlineMs = () => Math.max(0, deadlineAt - Date.now())
+  const deadlineResult = (): AgentResult => ({
+    answer: '',
+    steps,
+    toolCalls,
+    reason: 'deadline',
+    finalMessages: buildFinalAnswerMessages(
+      messages,
+      '本轮已达到整次任务时限。请仅基于已有证据给出可确认的结论，并明确声明尚未取得或验证的信息。',
+    ),
+    sources: knowledgeSources,
+  })
   if (hasPrefetchedMemoryLookup) {
     calledToolNames.push('search_memory')
   }
@@ -775,6 +788,7 @@ export async function runAgent({
 
   const requestAgentCompletion = async () => {
     const requestOnce = async (retryLevel: 0 | 1) => {
+      if (remainingDeadlineMs() <= 0) throw new DOMException('Agent deadline exceeded', 'TimeoutError')
       const packed = packModelContext(messages, contextWindowTokens, retryLevel)
       if (!streamEnabled) {
         return client.chat({
@@ -843,6 +857,7 @@ export async function runAgent({
   }
 
   const repairUnmetReadCapabilities = async (): Promise<boolean> => {
+    if (remainingDeadlineMs() <= 0) return false
     const unmetCapabilities = checkRequiredCapabilities(mergedRequired, calledToolNames)
     const repairTools = getRepairTools(unmetCapabilities)
       .filter((name) => candidateTools.includes(name))
@@ -883,7 +898,7 @@ export async function runAgent({
           : name === 'get_current_time' ? {}
           : { query: userIntent },
       })),
-      mergedConfig.stepTimeout,
+      Math.min(mergedConfig.stepTimeout, remainingDeadlineMs()),
       userIntent,
       signal,
       selectionContextReadLevels,
@@ -955,6 +970,7 @@ export async function runAgent({
         reason: 'completed',
       }
     } catch (err) {
+      if (signal?.reason === 'deadline' || remainingDeadlineMs() <= 0) return deadlineResult()
       const msg = err instanceof Error ? err.message : String(err)
       return {
         answer: `AI 请求失败: ${msg}`,
@@ -968,6 +984,7 @@ export async function runAgent({
   // 有候选工具，进入 Agent 循环
   for (let i = 0; i < mergedConfig.maxSteps; i++) {
     if (signal?.aborted) {
+      if (signal.reason === 'deadline') return deadlineResult()
       return { answer: '已取消本次 Agent 请求。', steps, toolCalls, reason: 'error', sources: knowledgeSources }
     }
     if (toolCalls >= mergedConfig.maxToolCalls && (!requiresEditConfirmation || editToolCalls > 0)) {
@@ -1001,6 +1018,7 @@ export async function runAgent({
         }
       }
     } catch (err) {
+      if (signal?.reason === 'deadline' || remainingDeadlineMs() <= 0) return deadlineResult()
       const msg = err instanceof Error ? err.message : String(err)
       return {
         answer: `AI 请求失败: ${msg}`,
@@ -1105,7 +1123,7 @@ export async function runAgent({
 
     const toolResults = await executeToolCalls(
       parsedToolCalls.map(tc => ({ name: tc.name, args: tc.args })),
-      mergedConfig.stepTimeout,
+      Math.min(mergedConfig.stepTimeout, remainingDeadlineMs()),
       userIntent,
       signal,
       selectionContextReadLevels,
@@ -1246,6 +1264,24 @@ export async function runAgent({
     toolCalls,
     reason: 'max_steps',
     sources: knowledgeSources,
+  }
+}
+
+export async function runAgent(request: AgentRunRequest): Promise<AgentResult> {
+  const deadlineMs = Math.max(1, Math.floor(request.config?.deadlineMs ?? DEFAULT_CONFIG.deadlineMs))
+  const deadlineAt = Date.now() + deadlineMs
+  const controller = new AbortController()
+  const parentSignal = request.signal
+  const forwardCancellation = () => controller.abort(parentSignal?.reason)
+  if (parentSignal?.aborted) forwardCancellation()
+  else parentSignal?.addEventListener('abort', forwardCancellation, { once: true })
+  const timer = setTimeout(() => controller.abort('deadline'), deadlineMs)
+
+  try {
+    return await runAgentInternal({ ...request, signal: controller.signal }, deadlineAt)
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener('abort', forwardCancellation)
   }
 }
 

@@ -1,7 +1,7 @@
 import type { Chunk } from './types'
 import { createExactContentHash } from './contentHash'
 
-export const EMBEDDING_PREPROCESS_VERSION = 'markdown-chunk-v2'
+export const EMBEDDING_PREPROCESS_VERSION = 'markdown-structured-v3'
 export const EMBEDDING_INPUT_MAX_CHARS = 6000
 
 export interface EmbeddingInputPart {
@@ -11,12 +11,25 @@ export interface EmbeddingInputPart {
   endLine: number
 }
 
-export function getEmbeddingInput(chunk: Pick<Chunk, 'content'>): string {
-  return chunk.content
+export function getEmbeddingInput(
+  chunk: Pick<Chunk, 'content' | 'titlePath' | 'sourceType'>,
+  documentTitle = '',
+): string {
+  const titlePath = chunk.titlePath?.filter((part) => part.trim()).join(' > ') || '未命名位置'
+  return [
+    `文档标题：${documentTitle.trim() || '未命名文档'}`,
+    `标题路径：${titlePath}`,
+    `块类型：${chunk.sourceType || 'markdown'}`,
+    '正文：',
+    chunk.content,
+  ].join('\n')
 }
 
-export function createEmbeddingInputHash(chunk: Pick<Chunk, 'content'>): Promise<string> {
-  return createExactContentHash(getEmbeddingInput(chunk))
+export function createEmbeddingInputHash(
+  chunk: Pick<Chunk, 'content' | 'titlePath' | 'sourceType'>,
+  documentTitle = '',
+): Promise<string> {
+  return createExactContentHash(getEmbeddingInput(chunk, documentTitle))
 }
 
 function countNewlines(value: string): number {
@@ -56,18 +69,22 @@ function findSafeEnd(content: string, start: number, maxChars: number): number {
  * Split only the provider input. The persisted/displayed parent chunk remains unchanged.
  */
 export function buildEmbeddingInputs(
-  chunk: Pick<Chunk, 'content' | 'startLine' | 'endLine'>,
+  chunk: Pick<Chunk, 'content' | 'startLine' | 'endLine' | 'titlePath' | 'sourceType'>,
   maxChars = EMBEDDING_INPUT_MAX_CHARS,
+  documentTitle = '',
 ): EmbeddingInputPart[] {
   const limit = Math.max(1, Math.floor(maxChars))
   const parts: EmbeddingInputPart[] = []
+  const prefix = getEmbeddingInput({ ...chunk, content: '' }, documentTitle)
+  const contentLimit = Math.max(1, limit - prefix.length)
   let offset = 0
   let startLine = chunk.startLine
 
   do {
-    const end = findSafeEnd(chunk.content, offset, limit)
-    const text = chunk.content.slice(offset, end)
-    const newlineCount = countNewlines(text)
+    const end = findSafeEnd(chunk.content, offset, contentLimit)
+    const contentPart = chunk.content.slice(offset, end)
+    const text = `${prefix}${contentPart}`
+    const newlineCount = countNewlines(contentPart)
     const endLine = Math.min(
       chunk.endLine,
       Math.max(startLine, startLine + newlineCount - (text.endsWith('\n') ? 1 : 0)),

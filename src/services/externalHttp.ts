@@ -29,11 +29,19 @@ type OriginAuthorizationChoice = 'session' | 'permanent' | 'cancel'
 type OriginAuthorizationPrompt = (origin: string) => Promise<OriginAuthorizationChoice>
 
 interface NativeHttpRequest {
+  requestId: string
   url: string
   method: string
   headers: [string, string][]
   body?: number[]
   timeoutMs?: number
+}
+
+let requestSequence = 0
+
+function createRequestId(): string {
+  requestSequence += 1
+  return `external-http-${Date.now().toString(36)}-${requestSequence.toString(36)}`
 }
 
 type NativeStreamEvent =
@@ -177,6 +185,7 @@ async function createNativeRequest(input: string | URL | Request, init?: Request
   }
   const body = request.method === 'GET' ? undefined : Array.from(new Uint8Array(await request.arrayBuffer()))
   return {
+    requestId: createRequestId(),
     url: request.url,
     method: request.method,
     headers: Array.from(headers.entries()),
@@ -190,8 +199,15 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
     const channel = new Channel<NativeStreamEvent>()
     let controller: ReadableStreamDefaultController<Uint8Array> | null = null
     let settled = false
+    let completed = false
+
+    const cancelNative = () => {
+      if (completed) return
+      void invoke('cancel_external_http_request', { requestId: request.requestId }).catch(() => undefined)
+    }
 
     const fail = (error: unknown) => {
+      completed = true
       const normalized = toExternalHttpError(error)
       if (!settled) {
         settled = true
@@ -202,6 +218,7 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
     }
 
     const abort = () => {
+      cancelNative()
       const error = signal?.reason instanceof Error
         ? signal.reason
         : new DOMException('Request aborted', 'AbortError')
@@ -229,7 +246,10 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
         const hasBody = ![204, 205, 304].includes(event.status)
         const stream = hasBody ? new ReadableStream<Uint8Array>({
           start(value) { controller = value },
-          cancel() { signal?.removeEventListener('abort', abort) },
+          cancel() {
+            cancelNative()
+            signal?.removeEventListener('abort', abort)
+          },
         }) : null
         settled = true
         resolve(new Response(stream, { status: event.status, headers: event.headers }))
@@ -239,11 +259,14 @@ function invokeStream(request: NativeHttpRequest, signal?: AbortSignal): Promise
         controller?.enqueue(Uint8Array.from(event.data))
         return
       }
+      completed = true
       controller?.close()
       signal?.removeEventListener('abort', abort)
     }
 
-    invoke('external_http_stream', { request, onEvent: channel }).catch(fail)
+    invoke('external_http_stream', { request, onEvent: channel })
+      .then(() => { if (signal?.aborted) cancelNative() })
+      .catch(fail)
   })
 }
 

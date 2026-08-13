@@ -19,6 +19,10 @@ export interface Chunk {
   embedding?: number[]
 }
 
+export interface NeighborContextChunk extends Chunk {
+  contextRole: 'neighbor-context'
+}
+
 export interface Document {
   id: string
   filePath: string
@@ -36,6 +40,7 @@ export interface SearchResult {
   retrievalMode: RetrievalMode
   keywordScore?: number
   vectorScore?: number
+  neighborChunks?: NeighborContextChunk[]
 }
 
 export interface RAGContextSource {

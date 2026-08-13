@@ -306,7 +306,7 @@ describe('Agent execution budget', () => {
     })
 
     expect(result.steps.some((step) => step.content === '工具执行出错: 匿名工具失败')).toBe(true)
-    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(clearTimeoutSpy).toHaveBeenCalled()
     expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 
@@ -374,7 +374,7 @@ describe('Agent execution budget', () => {
       streamEnabled: true,
     })
     while (executeLate.mock.calls.length === 0) await Promise.resolve()
-    expect(vi.getTimerCount()).toBe(1)
+    expect(vi.getTimerCount()).toBe(2)
     await vi.advanceTimersByTimeAsync(5)
     const result = await pending
 
@@ -390,5 +390,41 @@ describe('Agent execution budget', () => {
     await Promise.resolve()
     expect(result.steps).toEqual(completedSteps)
     expect(result.steps.some((step) => step.content.includes('匿名迟到工具结果'))).toBe(false)
+  })
+
+  it('整次 deadline 收敛工具超时并基于已有证据降级', async () => {
+    vi.useFakeTimers()
+    let toolSignal: AbortSignal | undefined
+    const executePastDeadline = vi.fn(async (_args, context) => await new Promise<string>(() => {
+      toolSignal = context.signal
+    }))
+    registerTool({
+      name: 'get_current_time',
+      description: '匿名 deadline 工具',
+      parameters: [],
+      execute: executePastDeadline,
+    })
+    responseQueue.push([{
+      content: '',
+      done: true,
+      toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
+    }])
+
+    const pending = runAgent({
+      query: '匿名 deadline 请求',
+      candidateToolNames: ['get_current_time'],
+      config: { stepTimeout: 30_000, deadlineMs: 20 },
+      streamEnabled: true,
+    })
+    while (executePastDeadline.mock.calls.length === 0) await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(20)
+    const result = await pending
+
+    expect(result.reason).toBe('deadline')
+    expect(result.toolCalls).toBe(1)
+    expect(result.finalMessages?.at(-1)?.content).toContain('已有证据')
+    expect(result.finalMessages?.at(-1)?.content).toContain('尚未取得或验证')
+    expect(toolSignal).toMatchObject({ aborted: true, reason: 'deadline' })
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

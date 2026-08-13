@@ -6,7 +6,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -22,6 +22,7 @@ use tokio::{
     net::lookup_host,
     sync::{Mutex as AsyncMutex, Semaphore},
 };
+use tokio_util::sync::CancellationToken;
 use url::{Host, Url};
 
 const API_ORIGIN_GRANTS_FILE: &str = "api-origin-grants.json";
@@ -59,6 +60,7 @@ pub struct ApiOriginState {
     loaded: AtomicBool,
     load_lock: AsyncMutex<()>,
     concurrency: Semaphore,
+    cancellations: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl Default for ApiOriginState {
@@ -69,6 +71,7 @@ impl Default for ApiOriginState {
             loaded: AtomicBool::new(false),
             load_lock: AsyncMutex::new(()),
             concurrency: Semaphore::new(MAX_CONCURRENT_REQUESTS),
+            cancellations: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -102,6 +105,7 @@ impl ApiHttpError {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalHttpRequest {
+    request_id: String,
     url: String,
     method: String,
     #[serde(default)]
@@ -116,6 +120,35 @@ pub struct ExternalHttpResponse {
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+fn register_cancellation(
+    state: &ApiOriginState,
+    request_id: &str,
+) -> Result<CancellationToken, ApiHttpError> {
+    if request_id.trim().is_empty() {
+        return Err(ApiHttpError::new("INVALID_REQUEST_ID", "请求 ID 不能为空"));
+    }
+    let token = CancellationToken::new();
+    let replaced = state
+        .cancellations
+        .lock()
+        .map_err(|_| ApiHttpError::new("CANCELLATION_STATE_UNAVAILABLE", "请求取消状态不可用"))?
+        .insert(request_id.to_owned(), token.clone());
+    if let Some(previous) = replaced {
+        previous.cancel();
+    }
+    Ok(token)
+}
+
+fn cleanup_cancellation(state: &ApiOriginState, request_id: &str) {
+    if let Ok(mut cancellations) = state.cancellations.lock() {
+        cancellations.remove(request_id);
+    }
+}
+
+fn cancelled_error() -> ApiHttpError {
+    ApiHttpError::new("REQUEST_CANCELLED", "请求已取消")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -416,7 +449,8 @@ fn is_authorized(state: &ApiOriginState, origin: &str) -> Result<bool, ApiHttpEr
 
 async fn send_request(
     state: &ApiOriginState,
-    request: ExternalHttpRequest,
+    request: &ExternalHttpRequest,
+    cancellation: &CancellationToken,
 ) -> Result<Response, ApiHttpError> {
     let method = parse_method(&request.method)?;
     let url = Url::parse(&request.url)
@@ -451,13 +485,32 @@ async fn send_request(
     let mut outgoing = client
         .request(method, url)
         .headers(build_headers(&request.headers)?);
-    if let Some(body) = request.body {
-        outgoing = outgoing.body(body);
+    if let Some(body) = &request.body {
+        outgoing = outgoing.body(body.clone());
     }
-    outgoing
-        .send()
-        .await
-        .map_err(|error| ApiHttpError::new("NETWORK_ERROR", error.to_string()))
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(cancelled_error()),
+        response = outgoing.send() => response
+            .map_err(|error| ApiHttpError::new("NETWORK_ERROR", error.to_string())),
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn cancel_external_http_request(
+    state: State<'_, ApiOriginState>,
+    request_id: String,
+) -> Result<bool, ApiHttpError> {
+    let token = state
+        .cancellations
+        .lock()
+        .map_err(|_| ApiHttpError::new("CANCELLATION_STATE_UNAVAILABLE", "请求取消状态不可用"))?
+        .remove(&request_id);
+    if let Some(token) = token {
+        token.cancel();
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -578,32 +631,44 @@ pub async fn external_http_request(
     request: ExternalHttpRequest,
 ) -> Result<ExternalHttpResponse, ApiHttpError> {
     ensure_loaded(&app, &state).await?;
-    let _permit = state
-        .concurrency
-        .acquire()
-        .await
-        .map_err(|_| ApiHttpError::new("CONCURRENCY_UNAVAILABLE", "请求并发控制不可用"))?;
-    let response = send_request(&state, request).await?;
-    let status = response.status().as_u16();
-    let headers = response_headers(&response);
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|error| ApiHttpError::new("RESPONSE_READ_FAILED", error.to_string()))?;
-        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BODY_BYTES {
-            return Err(ApiHttpError::new(
-                "RESPONSE_BODY_TOO_LARGE",
-                "响应体超过 16 MiB 限制",
-            ));
+    let request_id = request.request_id.clone();
+    let cancellation = register_cancellation(&state, &request_id)?;
+    let result = async {
+        let _permit = tokio::select! {
+            _ = cancellation.cancelled() => return Err(cancelled_error()),
+            permit = state.concurrency.acquire() => permit
+                .map_err(|_| ApiHttpError::new("CONCURRENCY_UNAVAILABLE", "请求并发控制不可用"))?,
+        };
+        let response = send_request(&state, &request, &cancellation).await?;
+        let status = response.status().as_u16();
+        let headers = response_headers(&response);
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        loop {
+            let chunk = tokio::select! {
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else { break };
+            let chunk = chunk
+                .map_err(|error| ApiHttpError::new("RESPONSE_READ_FAILED", error.to_string()))?;
+            if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BODY_BYTES {
+                return Err(ApiHttpError::new(
+                    "RESPONSE_BODY_TOO_LARGE",
+                    "响应体超过 16 MiB 限制",
+                ));
+            }
+            body.extend_from_slice(&chunk);
         }
-        body.extend_from_slice(&chunk);
+        Ok(ExternalHttpResponse {
+            status,
+            headers,
+            body,
+        })
     }
-    Ok(ExternalHttpResponse {
-        status,
-        headers,
-        body,
-    })
+    .await;
+    cleanup_cancellation(&state, &request_id);
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -614,15 +679,18 @@ pub async fn external_http_stream(
     on_event: Channel<ExternalHttpStreamEvent>,
 ) -> Result<(), ApiHttpError> {
     ensure_loaded(&app, &state).await?;
+    let request_id = request.request_id.clone();
+    let cancellation = register_cancellation(&state, &request_id)?;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<ApiOriginState>();
         let result = async {
-            let _permit =
-                state.concurrency.acquire().await.map_err(|_| {
-                    ApiHttpError::new("CONCURRENCY_UNAVAILABLE", "请求并发控制不可用")
-                })?;
-            let response = send_request(&state, request).await?;
+            let _permit = tokio::select! {
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                permit = state.concurrency.acquire() => permit
+                    .map_err(|_| ApiHttpError::new("CONCURRENCY_UNAVAILABLE", "请求并发控制不可用"))?,
+            };
+            let response = send_request(&state, &request, &cancellation).await?;
             let status = response.status().as_u16();
             let headers = response_headers(&response);
             if on_event
@@ -633,7 +701,12 @@ pub async fn external_http_stream(
             }
             let mut received = 0usize;
             let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
+            loop {
+                let chunk = tokio::select! {
+                    _ = cancellation.cancelled() => return Err(cancelled_error()),
+                    chunk = stream.next() => chunk,
+                };
+                let Some(chunk) = chunk else { break };
                 let chunk = chunk.map_err(|error| {
                     ApiHttpError::new("RESPONSE_READ_FAILED", error.to_string())
                 })?;
@@ -660,6 +733,7 @@ pub async fn external_http_stream(
         if let Err(error) = result {
             let _ = on_event.send(ExternalHttpStreamEvent::Error { error });
         }
+        cleanup_cancellation(&state, &request_id);
     });
     Ok(())
 }
@@ -820,17 +894,67 @@ mod tests {
         });
         let response = send_request(
             &state,
-            ExternalHttpRequest {
+            &ExternalHttpRequest {
+                request_id: "redirect-test".into(),
                 url: format!("{origin}/redirect"),
                 method: "GET".into(),
                 headers: vec![],
                 body: None,
                 timeout_ms: Some(5_000),
             },
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
         assert_eq!(response.status().as_u16(), 302);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_response_reading_and_registry_cleanup_is_idempotent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://127.0.0.1:{}", address.port());
+        let state = ApiOriginState::default();
+        state.session.lock().unwrap().insert(origin.clone());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nfirst\r\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = socket.write_all(b"6\r\nsecond\r\n0\r\n\r\n").await;
+        });
+        let request_id = "cancellation-test";
+        let cancellation = register_cancellation(&state, request_id).unwrap();
+        let response = send_request(
+            &state,
+            &ExternalHttpRequest {
+                request_id: request_id.into(),
+                url: format!("{origin}/slow"),
+                method: "GET".into(),
+                headers: vec![],
+                body: None,
+                timeout_ms: Some(5_000),
+            },
+            &cancellation,
+        )
+        .await
+        .unwrap();
+        let mut stream = response.bytes_stream();
+        assert_eq!(stream.next().await.unwrap().unwrap().as_ref(), b"first");
+        cancellation.cancel();
+        let error = tokio::select! {
+            _ = cancellation.cancelled() => cancelled_error(),
+            _ = stream.next() => panic!("cancelled response should not continue reading"),
+        };
+        assert_eq!(error.code, "REQUEST_CANCELLED");
+        cleanup_cancellation(&state, request_id);
+        cleanup_cancellation(&state, request_id);
+        assert!(state.cancellations.lock().unwrap().is_empty());
         server.await.unwrap();
     }
 }

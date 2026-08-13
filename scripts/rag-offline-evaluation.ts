@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { vectorStore } from '../src/services/rag/vectorStore'
+import { buildContextResult } from '../src/services/rag/pipeline'
 import type { Document, SearchResult } from '../src/services/rag/types'
 
 interface FixtureChunk { id: string; heading: string; content: string; embedding: number[] }
 interface FixtureDocument { id: string; title: string; chunks: FixtureChunk[] }
 interface FixtureQuery { id: string; query: string; embedding: number[] | null; relevantChunkIds: string[]; answerEvidence: string | null }
-interface EvaluationFixture { version: number; topK: number; documents: FixtureDocument[]; queries: FixtureQuery[] }
+interface NeighborScenario { queryId: string; primaryChunkId: string; neighborChunkId: string; neighborContent: string; answerEvidence: string }
+interface EvaluationFixture { version: number; topK: number; documents: FixtureDocument[]; queries: FixtureQuery[]; neighborScenarios: NeighborScenario[] }
 
 const fixturePath = resolve(process.cwd(), 'tests/rag/fixtures/offlineEvaluation.json')
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as EvaluationFixture
@@ -54,6 +56,7 @@ for (const [documentIndex, source] of fixture.documents.entries()) {
       index: chunkIndex,
       startLine: chunkIndex * 10 + 1,
       endLine: chunkIndex * 10 + 2,
+      titlePath: [chunk.heading],
       sourceType: 'markdown' as const,
     })),
   }
@@ -96,6 +99,28 @@ for (const query of fixture.queries) {
   }
 }
 
+let neighborGains = 0
+for (const scenario of fixture.neighborScenarios) {
+  const query = fixture.queries.find((candidate) => candidate.id === scenario.queryId)!
+  const primary = search(query).find((result) => result.chunk.id === scenario.primaryChunkId)!
+  const neighbor = {
+    ...primary.chunk,
+    id: scenario.neighborChunkId,
+    index: primary.chunk.index + 1,
+    startLine: primary.chunk.endLine + 1,
+    endLine: primary.chunk.endLine + 2,
+    content: scenario.neighborContent,
+  }
+  const mainContext = buildContextResult([primary], Number.MAX_SAFE_INTEGER).text
+  const expandedContext = buildContextResult([{
+    ...primary,
+    neighborChunks: [{ ...neighbor, contextRole: 'neighbor-context' }],
+  }], Number.MAX_SAFE_INTEGER).text
+  if (!mainContext.includes(scenario.answerEvidence) && expandedContext.includes(scenario.answerEvidence)) {
+    neighborGains += 1
+  }
+}
+
 const metrics = {
   fixtureVersion: fixture.version,
   queryCount: fixture.queries.length,
@@ -106,6 +131,7 @@ const metrics = {
   sourceAccuracy: sourceHits / answerable.length,
   noAnswerFalseRecallRate: falseRecall / noAnswer.length,
   groundedness: groundedHits / answerable.length,
+  neighborContextGain: neighborGains / fixture.neighborScenarios.length,
   latencyMs: {
     cold: Number(coldLatencyMs.toFixed(3)),
     hotP50: Number(percentile(hotLatencies, 0.5).toFixed(3)),
@@ -113,11 +139,12 @@ const metrics = {
   },
 }
 
+console.log(JSON.stringify(metrics, null, 2))
 assert.equal(metrics.recallAtK, 1)
 assert.equal(metrics.mrr, 1)
 assert.equal(metrics.ndcgAtK, 1)
 assert.equal(metrics.sourceAccuracy, 1)
 assert.equal(metrics.noAnswerFalseRecallRate, 0)
 assert.equal(metrics.groundedness, 1)
-console.log(JSON.stringify(metrics, null, 2))
+assert.equal(metrics.neighborContextGain, 1)
 vectorStore.clear()

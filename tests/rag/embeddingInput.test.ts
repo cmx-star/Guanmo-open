@@ -5,6 +5,7 @@ import {
   EMBEDDING_PREPROCESS_VERSION,
   buildEmbeddingInputs,
   createEmbeddingInputHash,
+  getEmbeddingInput,
 } from '@/services/rag/embeddingInput'
 import { canSkipDocumentIndex, reconcileDocumentChunks } from '@/services/rag/reconciler'
 
@@ -53,11 +54,11 @@ describe('buildEmbeddingInputs', () => {
     ['plain text', 'anonymous'.repeat(20)],
   ])('splits oversized %s without changing the parent content', (_kind, content) => {
     const chunk = createChunk(content, 10)
-    const inputs = buildEmbeddingInputs(chunk, 48)
+    const inputs = buildEmbeddingInputs(chunk, 80)
 
     expect(inputs.length).toBeGreaterThan(1)
-    expect(inputs.map((input) => input.text).join('')).toBe(content)
-    expect(inputs.every((input) => input.text.length <= 48)).toBe(true)
+    expect(inputs.map((input) => input.text.replace(getEmbeddingInput({ ...chunk, content: '' }), '')).join('')).toBe(content)
+    expect(inputs.every((input) => input.text.length <= 80)).toBe(true)
     expect(inputs[0].startLine).toBe(10)
     expect(inputs.at(-1)?.endLine).toBe(chunk.endLine)
     expect(inputs.map((input) => input.partIndex)).toEqual(inputs.map((_, index) => index))
@@ -66,10 +67,11 @@ describe('buildEmbeddingInputs', () => {
   it('keeps exact line ranges across newline boundaries', () => {
     const chunk = createChunk('one\ntwo\nthree\nfour', 20)
 
-    expect(buildEmbeddingInputs(chunk, 8)).toEqual([
-      expect.objectContaining({ text: 'one\ntwo\n', startLine: 20, endLine: 21 }),
-      expect.objectContaining({ text: 'three\n', startLine: 22, endLine: 22 }),
-      expect.objectContaining({ text: 'four', startLine: 23, endLine: 23 }),
+    const prefix = getEmbeddingInput({ ...chunk, content: '' })
+    expect(buildEmbeddingInputs(chunk, prefix.length + 8)).toEqual([
+      expect.objectContaining({ text: `${prefix}one\ntwo\n`, startLine: 20, endLine: 21 }),
+      expect.objectContaining({ text: `${prefix}three\n`, startLine: 22, endLine: 22 }),
+      expect.objectContaining({ text: `${prefix}four`, startLine: 23, endLine: 23 }),
     ])
   })
 })
@@ -99,7 +101,7 @@ describe('embedDocument oversized input fallback', () => {
     mockBatchEmbedding.mockRejectedValueOnce(new Error('provider rejected oversized batch'))
     mockEmbedding.mockImplementation(async (text: string) => {
       if (text.includes(privateMarker)) throw new Error(`rejected input: ${privateMarker}`)
-      return { embedding: text.startsWith('a') ? [1, 0] : [0, 1] }
+      return { embedding: text.includes('a'.repeat(100)) ? [1, 0] : [0, 1] }
     })
 
     const { embedDocument } = await import('@/services/rag/pipeline')
@@ -109,7 +111,7 @@ describe('embedDocument oversized input fallback', () => {
     const batchInputs = mockBatchEmbedding.mock.calls[0][0] as string[]
     expect(batchInputs.every((text) => text.length <= EMBEDDING_INPUT_MAX_CHARS)).toBe(true)
     expect(mockEmbedding).toHaveBeenCalledTimes(batchInputs.length)
-    expect(chunk.embedding).toEqual([0.5, 0.5])
+    expect(chunk.embedding).toEqual([1 / 3, 2 / 3])
     expect(result.embedded).toBe(1)
     expect(result.failed).toBe(0)
     expect(result.errors).toHaveLength(1)
@@ -193,6 +195,71 @@ describe('embedding preprocessing compatibility', () => {
     expect(reconciled.document.chunks[0]).toMatchObject({
       id: 'stable-parent-id',
       embedding: undefined,
+      embeddingPreprocessVersion: EMBEDDING_PREPROCESS_VERSION,
+    })
+    expect(reconciled.stats.reembedded).toBe(1)
+  })
+
+  it('does not skip an unchanged body when the document title changed', async () => {
+    const content = 'unchanged body'
+    const chunk = {
+      ...createChunk(content),
+      embedding: [1, 0],
+      embeddingModel: 'anonymous-test-model',
+      embeddingPreprocessVersion: EMBEDDING_PREPROCESS_VERSION,
+      embeddingInputHash: await createEmbeddingInputHash(createChunk(content), 'Old title'),
+    }
+    const existing: Document = {
+      id: 'anonymous-document', filePath: 'D:/anonymous/title.md', title: 'Old title', content,
+      contentHash: 'same-hash', lastModified: 1, chunks: [chunk],
+    }
+
+    expect(canSkipDocumentIndex(existing, 'same-hash', 'anonymous-test-model', 'Old title')).toBe(true)
+    expect(canSkipDocumentIndex(existing, 'same-hash', 'anonymous-test-model', 'New title')).toBe(false)
+  })
+
+  it('versions the document title, heading path and block type in the input hash', async () => {
+    const chunk = {
+      ...createChunk('same anonymous body'),
+      titlePath: ['Parent', 'Child'],
+      sourceType: 'markdown' as const,
+    }
+    const original = await createEmbeddingInputHash(chunk, 'Document A')
+
+    await expect(createEmbeddingInputHash(chunk, 'Document B')).resolves.not.toBe(original)
+    await expect(createEmbeddingInputHash({ ...chunk, titlePath: ['Other'] }, 'Document A')).resolves.not.toBe(original)
+    await expect(createEmbeddingInputHash({ ...chunk, sourceType: 'text' }, 'Document A')).resolves.not.toBe(original)
+    expect(getEmbeddingInput(chunk, 'Document A')).toContain('文档标题：Document A')
+    expect(getEmbeddingInput(chunk, 'Document A')).toContain('标题路径：Parent > Child')
+    expect(getEmbeddingInput(chunk, 'Document A')).toContain('块类型：markdown')
+  })
+
+  it('keeps the chunk id but rebuilds its vector when only the document title changes', async () => {
+    const content = 'same body under a renamed document'
+    const oldChunk: Chunk = {
+      ...createChunk(content),
+      id: 'stable-title-change-id',
+      embedding: [1, 0],
+      embeddingInputHash: await createEmbeddingInputHash(createChunk(content), 'Old title'),
+      embeddingModel: 'anonymous-test-model',
+      embeddingPreprocessVersion: EMBEDDING_PREPROCESS_VERSION,
+    }
+    const existing: Document = {
+      id: 'anonymous-document', filePath: 'D:/anonymous/title.md', title: 'Old title', content,
+      contentHash: 'same-document-hash', lastModified: 1, chunks: [oldChunk],
+    }
+    const reconciled = await reconcileDocumentChunks(
+      existing,
+      {
+        id: existing.id, filePath: existing.filePath, title: 'New title', content: existing.content,
+        contentHash: existing.contentHash, lastModified: existing.lastModified,
+      },
+      [createChunk(content)],
+      'anonymous-test-model',
+    )
+
+    expect(reconciled.document.chunks[0]).toMatchObject({
+      id: 'stable-title-change-id', embedding: undefined,
       embeddingPreprocessVersion: EMBEDDING_PREPROCESS_VERSION,
     })
     expect(reconciled.stats.reembedded).toBe(1)

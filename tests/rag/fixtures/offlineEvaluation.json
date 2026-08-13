@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "topK": 3,
   "documents": [
     {
@@ -26,6 +26,9 @@
         { "id": "gamma-restore", "heading": "恢复", "content": "匿名恢复失败时保留原始数据，不得清空正式库。", "embedding": [0, 0, 0, 0, 0, 1] }
       ]
     }
+  ],
+  "neighborScenarios": [
+    { "queryId": "q-config", "primaryChunkId": "alpha-config", "neighborChunkId": "alpha-config-detail", "neighborContent": "修改配置后运行 alpha config verify 校验匿名配置。", "answerEvidence": "alpha config verify" }
   ],
   "queries": [
     { "id": "q-install", "query": "package alpha install 如何安装匿名工具", "embedding": [1, 0, 0, 0, 0, 0], "relevantChunkIds": ["alpha-install"], "answerEvidence": "package alpha install" },
