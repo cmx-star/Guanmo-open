@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { EditorView } from '@codemirror/view'
+import type { EditorView } from '@codemirror/view'
 import { useAppStore } from '@/stores/appStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -16,10 +16,13 @@ import { describeFileOperationError } from '@/services/fileOperationErrors'
 import { openFileDialog } from '@/hooks/useTauri'
 import { addSelectionContextTag, setAiShortcutPrompt } from '@/services/aiContext'
 import { eventMarker } from '@/services/eventMarker'
-import { CodeMirrorEditor } from './CodeMirrorEditor'
+import { markStartupPoint } from '@/services/startupPerformance'
+import { hasBootSnapshotContent } from '@/services/bootSnapshot'
+import { OPEN_EDITOR_SEARCH_EVENT } from '@/services/editorEvents'
 import { EditorContextMenu } from './EditorContextMenu'
-import { MarkdownDiffView } from './MarkdownDiffView'
 import { MarkdownPreview, MarkdownToc, type MarkdownBlockCommitRequest, type MarkdownPreviewHandle } from './MarkdownPreview'
+import { CodeMirrorEditor } from './CodeMirrorEditor'
+import { MarkdownDiffView } from './MarkdownDiffView'
 import { SearchOverlay } from './SearchOverlay'
 import { TabBar } from './TabBar'
 import { ContextMenu, ContextMenuGroupTitle, ContextMenuItem, ContextMenuSeparator } from '@/components/common/ContextMenu'
@@ -37,8 +40,6 @@ import {
   type PrewarmedModeKeys,
   type InstanceType,
 } from '@/services/editorSession'
-
-export const OPEN_EDITOR_SEARCH_EVENT = 'guanmo:open-editor-search'
 
 interface PreviewMenuState {
   x: number
@@ -552,9 +553,16 @@ export function EditorArea() {
   const editorBecameVisibleRef = useRef(false)
   const previewBecameVisibleRef = useRef(false)
   useEffect(() => {
-    if (editorVisible && editorMounted && !editorBecameVisibleRef.current && activeTab?.id) {
+    const contentReady = activeTab && (
+      !activeTab.filePath || activeTab.modified || activeTab.content.length > 0 || hasBootSnapshotContent(activeTab)
+    )
+    if (editorVisible && editorMounted && !editorBecameVisibleRef.current && activeTab?.id && contentReady) {
       editorBecameVisibleRef.current = true
       const raf = requestAnimationFrame(() => {
+        markStartupPoint('active-document-first-visible', {
+          surface: 'editor',
+          charCount: activeTab.content.length,
+        })
         if (import.meta.env.DEV) {
           eventMarker.mark('editor-first-visible', {
             charCount: activeTab.content.length,
@@ -571,9 +579,16 @@ export function EditorArea() {
   }, [editorVisible, editorMounted, activeTab?.id, activeTab?.content.length, viewMode, modePerformancePolicy])
 
   useEffect(() => {
-    if (leftPreviewVisible && leftPreviewMounted && !previewBecameVisibleRef.current && activeTab?.id) {
+    const contentReady = activeTab && (
+      !activeTab.filePath || activeTab.modified || activeTab.content.length > 0 || hasBootSnapshotContent(activeTab)
+    )
+    if (leftPreviewVisible && leftPreviewMounted && !previewBecameVisibleRef.current && activeTab?.id && contentReady) {
       previewBecameVisibleRef.current = true
       const raf = requestAnimationFrame(() => {
+        markStartupPoint('active-document-first-visible', {
+          surface: 'preview',
+          charCount: activeTab.content.length,
+        })
         if (import.meta.env.DEV) {
           eventMarker.mark('preview-first-visible', {
             charCount: activeTab.content.length,
@@ -1014,9 +1029,7 @@ export function EditorArea() {
         view.scrollDOM.scrollTop = position.editorScrollTop
       } else if (typeof position.topLine === 'number' && position.topLine <= view.state.doc.lines) {
         const pos = view.state.doc.line(position.topLine).from
-        view.dispatch({
-          effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: SCROLL_SYNC_TOP_OFFSET }),
-        })
+        view.scrollDOM.scrollTop = Math.max(0, view.lineBlockAt(pos).top - SCROLL_SYNC_TOP_OFFSET)
       }
     })
   }, [])
@@ -1264,9 +1277,7 @@ export function EditorArea() {
 
     const pos = view.state.doc.line(line).from
     setScrollSyncSource('preview')
-    view.dispatch({
-      effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: SCROLL_SYNC_TOP_OFFSET }),
-    })
+    view.scrollDOM.scrollTop = Math.max(0, view.lineBlockAt(pos).top - SCROLL_SYNC_TOP_OFFSET)
   }, [setScrollSyncSource])
 
   useEffect(() => {
@@ -1415,7 +1426,7 @@ export function EditorArea() {
     const pos = view.state.doc.line(line).from
     view.dispatch({
       selection: { anchor: pos },
-      effects: EditorView.scrollIntoView(pos, { y: 'start' }),
+      scrollIntoView: true,
     })
     view.focus()
   }, [])

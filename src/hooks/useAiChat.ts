@@ -19,7 +19,7 @@ import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForMo
 import { hideLikelyToolJsonPrefix, stripToolCallJson } from '@/services/agent/toolCallParser'
 import { buildMemoryContext, isPersonalizedRewriteMemoryIntent, processMemoryCandidateExtraction, searchMemories } from '@/services/memory/memoryService'
 import type { ManualCapability } from '@/components/ai/ManualToolToggle'
-import { hydrateSettingsSecrets } from '@/services/settingsSecrets'
+import { ensureSettingsSecretsHydrated } from '@/services/settingsSecrets'
 import { singletonManager, SINGLETON_IDS } from '@/services/singletonPromise'
 import { promoteTask } from '@/services/idleScheduler'
 import { buildAgentRunRequest, buildRoutingAppContext } from '@/services/agent/requestBuilder'
@@ -132,15 +132,12 @@ export function useAiChat() {
   const activeRequestRef = useRef<{ id: string; assistantMessageId: string; cancelled: boolean } | null>(null)
 
   const ensureClient = useCallback(async (): Promise<boolean> => {
-    let currentAi = useSettingsStore.getState().ai
-    if (!currentAi.apiKey) {
-      try {
-        await hydrateSettingsSecrets()
-        currentAi = useSettingsStore.getState().ai
-      } catch (err) {
-        console.warn('[AI] Settings secret hydration retry failed:', err)
-      }
+    try {
+      await ensureSettingsSecretsHydrated()
+    } catch (err) {
+      console.warn('[AI] Settings secret hydration retry failed:', err)
     }
+    const currentAi = useSettingsStore.getState().ai
 
     // 初始化对话客户端（本地 API 无需 apiKey）
     const chatReady = (currentAi.apiKey || isLocalApi(currentAi.baseUrl)) && currentAi.baseUrl && currentAi.chatModel

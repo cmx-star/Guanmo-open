@@ -1,12 +1,11 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import 'katex/dist/katex.min.css'
 import { AppLayout } from './components/layout/AppLayout'
 import { ToastContainer } from './components/common/ToastContainer'
 import {
   getDatabaseRuntimeState,
   initDatabase,
 } from './services/database/db'
-import { hydrateSettingsSecrets } from './services/settingsSecrets'
+import { ensureSettingsSecretsHydrated } from './services/settingsSecrets'
 import { initAiClient, initEmbeddingClient, isLocalApi, validateAiStatus } from './services/ai/aiClient'
 import { syncDocumentTheme, useSettingsStore } from './stores/settingsStore'
 import { useAppStore } from './stores/appStore'
@@ -16,16 +15,15 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   getRestorablePersistedTabs,
   restorePersistedTabs,
+  type PersistedTabRestoreIssue,
 } from './services/sessionRestore'
 import { useEditorStore } from './stores/editorStore'
 import { isTauri } from './hooks/useTauri'
 import { useUsageTracking } from './hooks/useUsageTracking'
 import { GlobalTooltip } from './components/common/Tooltip'
 import { migrateLegacyFileAccess } from './services/persistedFileAccess'
-import { UpdateManager } from './components/update/UpdateManager'
 import { toast } from './services/toast'
 import { detectLegacyData, type LegacyDetectionResult } from './services/database/legacyDetector'
-import { LegacyDataNoticeModal } from './components/legacy/LegacyDataNoticeModal'
 import { scheduleIdleTask } from './services/idleScheduler'
 import { singletonManager, SINGLETON_IDS } from './services/singletonPromise'
 import { READING_REMINDER_FEATURE_AVAILABLE } from './services/readingReminderFeature'
@@ -33,17 +31,28 @@ import { eventMarker } from './services/eventMarker'
 import './styles/tokens/official-light.css'
 import { requestProductTour } from './features/productTour/productTourEvents'
 import { hasShownProductTourInvite, markProductTourInviteShown } from './features/productTour/productTourStorage'
+import { markStartupPoint, waitForStartupPoint } from './services/startupPerformance'
+import { hasBootSnapshotContent } from './services/bootSnapshot'
 
 syncDocumentTheme(useSettingsStore.getState().appearance.themeId)
 
 const DevPerfMonitorPanel = import.meta.env.DEV
   ? lazy(() => import('./components/devtools/PerfMonitorPanel').then((module) => ({ default: module.PerfMonitorPanel })))
   : null
+const UpdateManager = lazy(() => import('./components/update/UpdateManager').then((module) => ({ default: module.UpdateManager })))
+const LegacyDataNoticeModal = lazy(() => import('./components/legacy/LegacyDataNoticeModal').then((module) => ({ default: module.LegacyDataNoticeModal })))
 
 type CursorPhase = 'entering' | 'active' | 'exiting'
 
 function logDuration(label: string, startedAt: number) {
   console.info(`[Perf] ${label}: ${Math.round(performance.now() - startedAt)}ms`)
+}
+
+function showRestoreIssues(issues: PersistedTabRestoreIssue[]): void {
+  if (issues.length === 0) return
+  void import('./services/sessionRestoreNotifications')
+    .then(({ showSessionRestoreIssues }) => showSessionRestoreIssues(issues))
+    .catch((error) => console.warn('[App] Restore issue notification failed:', error))
 }
 
 /**
@@ -73,27 +82,40 @@ async function restoreTabs(): Promise<void> {
     ? state.activeTabId
     : restorableTabs[0]?.id ?? null
   const activeTab = restorableTabs.find((tab) => tab.id === activeTabId)
-  const [restoredActiveTab] = activeTab
-    ? await restorePersistedTabs([activeTab])
-    : []
-  const initialTabs = restorableTabs.map((tab) =>
-    tab.id === activeTabId ? (restoredActiveTab ?? tab) : tab
-  )
   state.restoreTabs(
-    initialTabs,
+    restorableTabs,
     activeTabId,
     state.rightPaneTabId && validIds.has(state.rightPaneTabId) ? state.rightPaneTabId : null,
   )
+  const activeIssues: PersistedTabRestoreIssue[] = []
+  const [restoredActiveTab] = activeTab
+    ? await restorePersistedTabs([activeTab], {
+        detectExternalChanges: hasBootSnapshotContent(activeTab),
+        onTabRestoreIssue: (issue) => activeIssues.push(issue),
+      })
+    : []
+  markStartupPoint('active-tab-disk-read-complete', {
+    restored: Boolean(restoredActiveTab),
+  })
+  if (activeTab && restoredActiveTab) {
+    useEditorStore.getState().mergeRestoredTab(activeTab, restoredActiveTab)
+  }
+  showRestoreIssues(activeIssues)
   logDuration('active tab restore', restoreStartedAt)
 
   const backgroundTabs = restorableTabs.filter((tab) => tab.id !== activeTabId)
+  const backgroundIssues: PersistedTabRestoreIssue[] = []
   void restorePersistedTabs(backgroundTabs, {
     concurrency: 3,
     onTabRestored(restoredTab, index) {
       const originalTab = backgroundTabs[index]
       useEditorStore.getState().mergeRestoredTab(originalTab, restoredTab)
     },
+    onTabRestoreIssue(issue) {
+      backgroundIssues.push(issue)
+    },
   }).then(() => {
+    showRestoreIssues(backgroundIssues)
     logDuration('background tab restore', restoreStartedAt)
   }).catch((error) => {
     console.warn('[App] Background tab restore failed:', error)
@@ -110,6 +132,7 @@ function scheduleIdleWarmup(): void {
   scheduleIdleTask(
     SINGLETON_IDS.CHAT_AI,
     async () => {
+      await ensureSettingsSecretsHydrated()
       const { ai } = useSettingsStore.getState()
       if ((ai.apiKey || isLocalApi(ai.baseUrl)) && ai.baseUrl && ai.chatModel) {
         await singletonManager.init(SINGLETON_IDS.CHAT_AI, async () => {
@@ -128,6 +151,7 @@ function scheduleIdleWarmup(): void {
   scheduleIdleTask(
     SINGLETON_IDS.EMBEDDING_AI,
     async () => {
+      await ensureSettingsSecretsHydrated()
       const { ai } = useSettingsStore.getState()
       if ((ai.embedding.apiKey || isLocalApi(ai.embedding.baseUrl)) && ai.embedding.baseUrl && ai.embedding.embeddingModel) {
         await singletonManager.init(SINGLETON_IDS.EMBEDDING_AI, async () => {
@@ -148,7 +172,7 @@ function scheduleIdleWarmup(): void {
   // AI 状态校验：完全异步，不阻塞任何操作
   setTimeout(() => {
     const startTime = performance.now()
-    validateAiStatus().then((status) => {
+    ensureSettingsSecretsHydrated().then(validateAiStatus).then((status) => {
       useAppStore.getState().setAiStatus(status)
       logDuration('AI status validate', startTime)
     }).catch((err) => {
@@ -297,6 +321,7 @@ function CustomCursorFrame({
 }
 
 function App() {
+  markStartupPoint('first-react-render')
   const [appReady, setAppReady] = useState(false)
   const [legacyDetection, setLegacyDetection] = useState<LegacyDetectionResult | null>(null)
   const customCursorEnabled = useSettingsStore((s) => s.appearance.customCursorEnabled)
@@ -350,31 +375,39 @@ function App() {
       const appInitStartedAt = performance.now()
 
       try {
-        // ==================== 启动阶段：只阻塞数据库和 UI 水合 ====================
+        await waitForStartupPoint('app-shell-interactive')
+        if (cancelled) return
+
+        // 密钥与 Markdown 首屏无关；AI 消费入口通过统一 Promise 等待水合。
         const secretsStartedAt = performance.now()
-        await hydrateSettingsSecrets().catch((err) =>
+        void ensureSettingsSecretsHydrated().then(() => {
+          markStartupPoint('secrets-hydrated')
+          logDuration('settings secret hydration', secretsStartedAt)
+        }).catch((err) => {
           console.warn('[App] Settings secret hydration failed:', err)
-        )
-        logDuration('settings secret hydration', secretsStartedAt)
+        })
 
         const databaseStartedAt = performance.now()
-        await initDatabase()
-        logDuration('database init', databaseStartedAt)
+        const restoreTabsStartedAt = performance.now()
+        await Promise.all([
+          initDatabase().then(() => {
+            markStartupPoint('database-ready')
+            logDuration('database init', databaseStartedAt)
+          }),
+          restoreTabs().then(() => {
+            logDuration('tabs restored', restoreTabsStartedAt)
+          }),
+        ])
 
-        // 标记数据库就绪
         if (getDatabaseRuntimeState().status !== 'ready') {
           throw new Error('Database not ready after init')
         }
-
-        // ==================== 首屏后：立即恢复标签页 ====================
-        const restoreTabsStartedAt = performance.now()
-        await restoreTabs()
-        logDuration('tabs restored', restoreTabsStartedAt)
 
         // ==================== UI 就绪：立即显示界面 ====================
         if (!cancelled) {
           setAppReady(true)
           eventMarker.mark('app-ready')
+          markStartupPoint('app-ready')
         }
         logDuration('ui ready', appInitStartedAt)
 
@@ -416,13 +449,13 @@ function App() {
       </CustomCursorFrame>
       <ToastContainer />
       {DevPerfMonitorPanel && <Suspense fallback={null}><DevPerfMonitorPanel /></Suspense>}
-      <UpdateManager />
+      <Suspense fallback={null}><UpdateManager /></Suspense>
       <GlobalTooltip />
       {legacyDetection && (
-        <LegacyDataNoticeModal
+        <Suspense fallback={null}><LegacyDataNoticeModal
           detection={legacyDetection}
           onClose={() => setLegacyDetection(null)}
-        />
+        /></Suspense>
       )}
     </>
   )

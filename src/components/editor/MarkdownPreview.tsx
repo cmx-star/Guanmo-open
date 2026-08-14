@@ -1,4 +1,5 @@
 import ReactMarkdown, { type Components, type Options } from 'react-markdown'
+import 'katex/dist/katex.min.css'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
