@@ -1560,7 +1560,25 @@ body {
 .gm-markdown-preview p,
 .gm-markdown-preview li {
   color: var(--gm-text);
-  white-space: pre-wrap;
+  white-space: normal;
+}
+
+.gm-markdown-preview li > p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.gm-markdown-preview li > p + p,
+.gm-markdown-preview li > blockquote {
+  margin-top: 0.75rem;
+}
+
+.gm-markdown-preview li > blockquote {
+  margin-bottom: 0;
+}
+
+.gm-markdown-preview li > blockquote > p {
+  margin: 0;
 }
 
 .gm-markdown-preview td {
@@ -1596,10 +1614,15 @@ body {
   font-size: 0.85em;
 }
 
-.gm-markdown-preview [align='center'] > .gm-markdown-image {
-  width: fit-content;
-  margin-right: auto;
-  margin-left: auto;
+.gm-markdown-preview .gm-markdown-paragraph--align-center {
+  text-align: center;
+}
+
+.gm-markdown-preview .gm-markdown-paragraph--align-center > .gm-markdown-image {
+  display: inline-flex !important;
+  margin: 0 0.125rem;
+  line-height: 0;
+  vertical-align: middle;
 }
 
 .gm-markdown-block {

@@ -756,8 +756,16 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
           p: ({ children, node, ...props }) => {
             // eslint-disable-next-line react-hooks/rules-of-hooks
             const base = useBlockLineBase()
+            const align = (props as { align?: string }).align
             return (
-              <p {...props} className="my-3" data-md-line={getNodeStartLine(node, base)} data-md-end-line={getNodeEndLine(node, base)}>{children}</p>
+              <p
+                {...props}
+                className={['my-3', align === 'center' && 'gm-markdown-paragraph--align-center'].filter(Boolean).join(' ')}
+                data-md-line={getNodeStartLine(node, base)}
+                data-md-end-line={getNodeEndLine(node, base)}
+              >
+                {children}
+              </p>
             )
           },
           strong: ({ children }) => (
