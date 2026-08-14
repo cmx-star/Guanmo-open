@@ -1401,8 +1401,8 @@ function GeneralSettings() {
   return (
     <div className="w-full pb-6">
       <SectionTitle>关于</SectionTitle>
-      <div className="flex flex-wrap items-center gap-3 py-2">
-        <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center">
+      <div className="flex flex-wrap items-start gap-3 py-2">
+        <div className="w-14 h-14 overflow-hidden flex items-center justify-center shrink-0">
           <img src={appIcon} alt="观墨" className="w-full h-full object-cover" />
         </div>
         <div className="min-w-0 flex-1">
