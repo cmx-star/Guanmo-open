@@ -1,4 +1,5 @@
 import {
+  deleteReadingReminderRow,
   loadReadingReminderById,
   loadReadingReminders,
   persistReadingReminder,
@@ -104,6 +105,23 @@ export async function cancelReadingReminder(
     await updateReadingReminderState(id, 'failed', { errorCode: 'notification_cancel_failed' })
     throw error
   }
+}
+
+export async function deleteReadingReminder(
+  id: string,
+  adapter: ReadingReminderNotificationAdapter = readingReminderNotificationAdapter,
+): Promise<void> {
+  const reminder = await loadReadingReminderById(id)
+  if (!reminder) return
+  if (reminder.notificationId) {
+    try {
+      await adapter.cancel(reminder.notificationId)
+    } catch {
+      console.warn('[Reminder] failed to cancel scheduled notification before delete')
+    }
+  }
+  await deleteReadingReminderRow(id)
+  refreshReadingReminderRuntime()
 }
 
 export async function retryReadingReminder(
