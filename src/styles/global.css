@@ -1436,6 +1436,23 @@ body {
   font-size: 12px;
 }
 
+/* 隐藏独立脚注区中的引用收集段落（仅用于触发 remark 全量渲染） */
+.gm-footnote-section {
+  margin-top: 32px;
+  border-top: 1px solid var(--gm-border-subtle);
+  padding-top: 12px;
+}
+
+.gm-footnote-section section[data-footnotes] {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
+}
+
+.gm-footnote-section > p:first-of-type {
+  display: none;
+}
+
 .prose .data-footnote-backref {
   color: var(--gm-primary);
   text-decoration: none;

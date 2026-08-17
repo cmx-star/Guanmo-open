@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { MarkdownPreview } from '@/components/editor/MarkdownPreview'
 
 describe('Markdown reference virtualization', () => {
@@ -16,7 +16,7 @@ describe('Markdown reference virtualization', () => {
     expect(view.container.querySelectorAll('[data-md-block-index]').length).toBeLessThan(40)
   })
 
-  it('resolves cross-block footnotes with one virtualized footnote section', () => {
+  it('renders cross-block footnotes and navigates in both directions', () => {
     const content = [
       '正文脚注[^note]。',
       '',
@@ -26,11 +26,29 @@ describe('Markdown reference virtualization', () => {
       '[^note]: 脚注定义内容。',
     ].join('\n')
     const view = render(<MarkdownPreview content={content} />)
-    expect(view.container.querySelector('sup a[href="#user-content-fn-note"]')).not.toBeNull()
-    expect(view.container.querySelectorAll('section[data-footnotes]').length).toBeLessThanOrEqual(1)
+    const footnoteSection = view.container.querySelector<HTMLElement>('section[data-footnotes]')
+    expect(footnoteSection).not.toBeNull()
+    expect(footnoteSection).toHaveTextContent('脚注定义内容。')
+    expect(view.container.querySelectorAll('section[data-footnotes]')).toHaveLength(1)
+    expect(view.container.querySelectorAll('a[data-footnote-backref]')).toHaveLength(2)
     const referenceIds = [...view.container.querySelectorAll('sup a[data-footnote-ref]')].map((item) => item.id)
     expect(new Set(referenceIds).size).toBe(referenceIds.length)
-    expect(view.container.querySelector('a[data-footnote-backref]')?.getAttribute('href')).toBe(`#${referenceIds[0]}`)
+
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    const reference = view.container.querySelector<HTMLAnchorElement>('[data-md-block-index] sup a[href="#user-content-fn-note"]')
+    expect(reference).not.toBeNull()
+    fireEvent.click(reference!)
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+
+    view.container.querySelectorAll('[data-md-block-index] sup a[data-footnote-ref]').forEach((item) => item.remove())
+    const scrollTo = vi.fn()
+    const preview = view.container.querySelector<HTMLElement>('.gm-markdown-preview')
+    Object.defineProperty(preview!.parentElement!, 'scrollTo', { configurable: true, value: scrollTo })
+    const backref = view.container.querySelectorAll<HTMLAnchorElement>('a[data-footnote-backref]')[1]
+    expect(backref).toHaveAttribute('href', '#user-content-fnref-note-2')
+    fireEvent.click(backref!)
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
     expect(view.container.querySelectorAll('[data-md-block-index]').length).toBeLessThan(40)
   })
 

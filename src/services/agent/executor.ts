@@ -39,7 +39,7 @@ import {
   LOCAL_RESEARCH_ANSWER_PROMPT,
   WEB_COMPARISON_ANSWER_PROMPT,
 } from './answerInstructions'
-import { isModelContextOverflowError, packModelContext } from '@/services/ai/contextBudget'
+import { dropOldestCompleteTurns, isModelContextOverflowError } from '@/services/ai/contextBudget'
 
 let toolsRegistered = false
 
@@ -157,12 +157,7 @@ function buildSystemPrompt(config: AgentConfig, toolNames?: readonly string[], c
   const prompt = config.systemPrompt.replace('{{tool_descriptions}}', toolDesc)
   const preference = customPreferencePrompt?.trim()
   if (!preference) return prompt
-  return `${prompt}
-
-${CUSTOM_PROMPT_POLICY}
-
-【用户偏好层】
-${preference}`
+  return `${prompt}\n\n${CUSTOM_PROMPT_POLICY}\n\n【用户偏好层】\n${preference}`
 }
 
 /**
@@ -744,10 +739,8 @@ async function runAgentInternal({
   onStreamContent,
   requiredCapabilities,
   untrustedContext,
-  untrustedContexts,
   customPreferencePrompt,
   streamEnabled = true,
-  contextWindowTokens = 8192,
   routingDecision,
 }: AgentRunRequest, deadlineAt: number): Promise<AgentResult> {
   initAgent()
@@ -855,14 +848,11 @@ async function runAgentInternal({
   const systemPrompt = buildSystemPrompt(mergedConfig, activeToolNames, customPreferencePrompt)
   const llmTools = candidateTools.length > 0 ? getToolsForLLM(activeToolNames) : []
 
-  const contextMessages = (untrustedContexts?.length ? untrustedContexts : [untrustedContext || ''])
-    .filter(Boolean)
-    .map((context) => buildUntrustedContextMessage(context))
-    .filter((message): message is ChatMessage => Boolean(message))
+  const contextMessage = buildUntrustedContextMessage(untrustedContext || '')
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...chatHistory,
-    ...contextMessages,
+    ...(contextMessage ? [contextMessage] : []),
     ...(answerInstruction ? [{ role: 'user' as const, content: answerInstruction }] : []),
     { role: 'user', content: query },
   ]
@@ -911,13 +901,11 @@ async function runAgentInternal({
   })
 
   const requestAgentCompletion = async () => {
-    const requestOnce = async (retryLevel: 0 | 1) => {
+    const send = async (currentMessages: ChatMessage[]) => {
       if (remainingDeadlineMs() <= 0) throw new DOMException('Agent deadline exceeded', 'TimeoutError')
-      const packed = packModelContext(messages, contextWindowTokens, retryLevel)
       if (!streamEnabled) {
         return client.chat({
-          messages: packed.messages,
-          maxTokens: packed.maxTokens,
+          messages: currentMessages,
           signal,
           temperature,
           tools: llmTools,
@@ -929,8 +917,7 @@ async function runAgentInternal({
       const toolCallBuffers = new Map<number, { id?: string; name: string; arguments: string }>()
 
       for await (const chunk of client.streamChat({
-        messages: packed.messages,
-        maxTokens: packed.maxTokens,
+        messages: currentMessages,
         signal,
         temperature,
         tools: llmTools,
@@ -972,11 +959,11 @@ async function runAgentInternal({
     }
 
     try {
-      return await requestOnce(0)
+      return await send(messages)
     } catch (error) {
       if (!isModelContextOverflowError(error) || signal?.aborted) throw error
-      console.warn('[Agent context] retrying model request with reduced anonymous budget')
-      return requestOnce(1)
+      console.warn('[Agent context] provider reported context overflow; retrying after dropping oldest turn')
+      return send(dropOldestCompleteTurns(messages))
     }
   }
 
@@ -1065,10 +1052,8 @@ async function runAgentInternal({
     try {
       let response
       try {
-        const packed = packModelContext(messages, contextWindowTokens)
         response = await client.chat({
-          messages: packed.messages,
-          maxTokens: packed.maxTokens,
+          messages,
           signal,
           temperature,
           tools: [],
@@ -1076,11 +1061,9 @@ async function runAgentInternal({
         })
       } catch (error) {
         if (!isModelContextOverflowError(error) || signal?.aborted) throw error
-        console.warn('[Agent context] retrying direct model request with reduced anonymous budget')
-        const packed = packModelContext(messages, contextWindowTokens, 1)
+        console.warn('[Agent context] provider reported context overflow; retrying after dropping oldest turn')
         response = await client.chat({
-          messages: packed.messages,
-          maxTokens: packed.maxTokens,
+          messages: dropOldestCompleteTurns(messages),
           signal,
           temperature,
           tools: [],
@@ -1306,60 +1289,6 @@ async function runAgentInternal({
       return { answer: '', steps, toolCalls, reason: 'completed', ...sourceMetadata() }
     }
 
-    // 智能裁剪历史（保留最近的用户消息和工具结果）
-    if (messages.length > 20) {
-      const systemMessage = messages[0]
-      const userMessage = messages[messages.length - 1] // 最近的用户消息
-
-      // 找到最近的工具结果消息
-      let lastToolResultIndex = -1
-      for (let j = messages.length - 1; j >= 0; j--) {
-        if (messages[j].role === 'user' && messages[j].content.includes('工具返回结果')) {
-          lastToolResultIndex = j
-          break
-        }
-      }
-
-      // 找到最近的用户消息（非工具结果）
-      let lastUserMessageIndex = -1
-      for (let j = messages.length - 1; j >= 0; j--) {
-        if (messages[j].role === 'user' && !messages[j].content.includes('工具返回结果')) {
-          lastUserMessageIndex = j
-          break
-        }
-      }
-
-      // 确定保留的起始位置
-      let keepFromIndex = 1 // 默认从第二条消息开始保留
-
-      if (lastToolResultIndex > 0) {
-        // 如果有工具结果，从工具结果前一条消息开始保留
-        keepFromIndex = Math.max(1, lastToolResultIndex - 1)
-      } else if (lastUserMessageIndex > 0) {
-        // 如果没有工具结果，从最近用户消息前一条开始保留
-        keepFromIndex = Math.max(1, lastUserMessageIndex - 1)
-      }
-
-      // 计算要保留的消息数量（最多保留15条）
-      const maxKeep = 15
-      const availableMessages = messages.length - keepFromIndex
-      const keepCount = Math.min(maxKeep, availableMessages)
-
-      // 如果需要裁剪
-      if (keepCount < availableMessages) {
-        keepFromIndex = messages.length - keepCount
-      }
-
-      // 重建消息数组
-      const recentMessages = messages.slice(keepFromIndex)
-      messages.length = 0
-      messages.push(systemMessage, ...recentMessages)
-
-      // 确保最近的用户消息在最后
-      if (messages[messages.length - 1].role !== 'user') {
-        messages.push(userMessage)
-      }
-    }
   }
 
   // 达到最大步数，检查强依赖

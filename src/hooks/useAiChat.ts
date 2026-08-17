@@ -3,7 +3,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { selectPrimaryWorkspacePath, useAppStore } from '@/stores/appStore'
 import { getAiClient, getEmbeddingClient, getEmbeddingConfig, initAiClient, initEmbeddingClient, isAiReady, isEmbeddingReady, isLocalApi } from '@/services/ai/aiClient'
-import { SYSTEM_TEMPERATURE } from '@/services/ai/types'
+import { SYSTEM_TEMPERATURE, type ChatMessage } from '@/services/ai/types'
 import { initAgent, runAgent } from '@/services/agent'
 import { shouldIncludeFullDocumentContext } from '@/services/agent/intentDetector'
 import { makeRoutingDecision } from '@/services/agent/routingService'
@@ -16,7 +16,7 @@ import { buildContextFromTags } from '@/services/contextBuilder'
 import { readFile as readTauriFile } from '@/hooks/useTauri'
 import { setAgentScopeContext } from '@/services/aiScope'
 import { resolveDirectRagSources, searchScopedKnowledge, shouldTriggerScopedRag, streamFinalAnswer } from '@/services/aiChatFlow'
-import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForModel, countRagSourcesInContext, createContextMeta, createUserChatMessage, prepareChatHistoryForModel, resolveAiAnswerMode } from '@/services/aiChatMessages'
+import { buildAgentFinalAnswerMessages, buildChatMessageTags, buildMessagesForModel, buildSupplementalAiContext, countRagSourcesInContext, createContextMeta, createUserChatMessage, prepareChatHistoryForModel, resolveAiAnswerMode } from '@/services/aiChatMessages'
 import { hideLikelyToolJsonPrefix, stripToolCallJson } from '@/services/agent/toolCallParser'
 import { buildMemoryContext, isPersonalizedRewriteMemoryIntent, processMemoryCandidateExtraction, searchMemories } from '@/services/memory/memoryService'
 import type { ManualCapability } from '@/components/ai/ManualToolToggle'
@@ -351,6 +351,9 @@ export function useAiChat() {
         }
       }
 
+      const activeClient = getAiClient()
+      const modelHistory: ChatMessage[] = prepareChatHistoryForModel(messages)
+
       const executeAgentRequest = async () => {
         clearAgentSteps()
         initAgent()
@@ -449,29 +452,29 @@ export function useAiChat() {
           }
         }
 
-        const agentRequest = buildAgentRunRequest({
-          content,
-          messages,
-          contextTags,
-          tagContext,
-          memoryContext,
-          routingDecision,
-          hasRecentEditContext,
-          hasPrefetchedMemoryLookup: memoryLookupAttempted,
-          signal: requestController.signal,
-          temperature: SYSTEM_TEMPERATURE.agentPlanning,
-          onStep: handleAgentStep,
-          onStreamContent: (streamedContent) => {
-            if (!isCurrentRequest()) return
-            const visibleContent = hideLikelyToolJsonPrefix(streamedContent)
-            if (!visibleContent) return
-            hasVisibleStreamContent = true
-            updateRequestMessage(visibleContent)
-          },
-          customPreferencePrompt: ai.customPreferencePrompt,
-          streamEnabled: ai.streamEnabled,
-          contextWindowTokens: ai.maxContextLength,
-        })
+        const createAgentRequest = () => buildAgentRunRequest({
+            content,
+            messages,
+            modelHistory,
+            contextTags,
+            tagContext,
+            memoryContext,
+            routingDecision,
+            hasRecentEditContext,
+            hasPrefetchedMemoryLookup: memoryLookupAttempted,
+            signal: requestController.signal,
+            temperature: SYSTEM_TEMPERATURE.agentPlanning,
+            streamEnabled: ai.streamEnabled,
+            onStep: handleAgentStep,
+            onStreamContent: (streamedContent) => {
+              if (!isCurrentRequest()) return
+              const visibleContent = hideLikelyToolJsonPrefix(streamedContent)
+              if (!visibleContent) return
+              hasVisibleStreamContent = true
+              updateRequestMessage(visibleContent)
+            },
+          })
+        const agentRequest = createAgentRequest()
         const { editTargets, originalRequest: contextOriginalRequest } = agentRequest
 
         try {
@@ -521,7 +524,6 @@ export function useAiChat() {
               signal: requestController.signal,
               temperature: SYSTEM_TEMPERATURE.agentAnswer,
               reasoningMode,
-              contextWindowTokens: ai.maxContextLength,
             })
 
             if (!isCurrentRequest()) {
@@ -591,7 +593,7 @@ export function useAiChat() {
       }
 
       setAgentTaskContext(null)
-      const client = getAiClient()
+      const client = activeClient
       let ragContext = ''
       let directRagRegistry: SourceReferenceRegistry = { entries: [] }
 
@@ -665,10 +667,14 @@ export function useAiChat() {
       }
 
       // 注入 RAG 上下文和 Memory 上下文
+      const injectedContext = buildSupplementalAiContext({
+        knowledgeContext: ragContext,
+        memoryContext,
+      })
       const finalMessages = buildMessagesForModel({
-        history: prepareChatHistoryForModel(messages),
+        history: modelHistory,
         userMessage: userMsg,
-        supplementalContexts: [ragContext, memoryContext].filter(Boolean),
+        supplementalContext: injectedContext,
         customPreferencePrompt: ai.customPreferencePrompt,
         answerMode: resolveAiAnswerMode(selectionRequestKind, useAgentMode),
       })
@@ -709,7 +715,6 @@ export function useAiChat() {
           signal: requestController.signal,
           temperature: ai.temperature,
           reasoningMode,
-          contextWindowTokens: ai.maxContextLength,
         })
         if (!isCurrentRequest()) return
         if (isCurrentRequest()) {

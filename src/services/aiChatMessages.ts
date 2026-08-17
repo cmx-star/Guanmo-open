@@ -88,7 +88,6 @@ export function buildMessagesForModel(options: {
   history: ChatMessage[]
   userMessage: ChatMessage
   supplementalContext?: string
-  supplementalContexts?: string[]
   customPreferencePrompt?: string
   answerMode?: AiAnswerMode
 }): ChatMessage[] {
@@ -99,21 +98,18 @@ export function buildMessagesForModel(options: {
       ? options.userMessage.displayContent
       : strippedUserContent,
   }
-  const contextParts = [
+  const contextText = [
     strippedUserContent === options.userMessage.content
       ? ''
       : options.userMessage.content.slice(strippedUserContent.length).trim(),
-    ...(options.supplementalContexts || []),
     options.supplementalContext?.trim(),
-  ].filter((part): part is string => Boolean(part?.trim()))
-  const contextMessages = contextParts
-    .map((part) => buildUntrustedContextMessage(part))
-    .filter((message): message is ChatMessage => Boolean(message))
+  ].filter(Boolean).join('\n\n')
+  const contextMessage = buildUntrustedContextMessage(contextText)
 
   return [
     ...buildSystemMessages(options.customPreferencePrompt, options.answerMode),
     ...options.history,
-    ...contextMessages,
+    ...(contextMessage ? [contextMessage] : []),
     latestUserMessage,
   ]
 }

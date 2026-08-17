@@ -648,7 +648,6 @@ function AiSettings({ onOpenKnowledgeManager }: { onOpenKnowledgeManager: () => 
       <SettingField label="对话模型" description="用于日常对话和 Agent 执行的模型">
         <Input value={ai.chatModel} onChange={(e) => updateAiConfig({ chatModel: e.target.value })} placeholder="gpt-4o-mini" />
       </SettingField>
-
       {/* 测试连接 */}
       <div className="py-1 flex items-center gap-2">
         <Button

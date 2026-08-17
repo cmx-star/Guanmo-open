@@ -5,8 +5,8 @@ import type { ContextTag } from '@/types/contextTag'
 import { resolveScopeFilePaths } from '@/services/aiScope'
 import { hideLikelyToolJsonPrefix } from '@/services/agent/toolCallParser'
 import type { RagSearchProgress } from '@/services/rag/nativeIndex'
+import { dropOldestCompleteTurns, isModelContextOverflowError } from '@/services/ai/contextBudget'
 import { createSourceReferenceRegistry, parseSourceReferences, type SourceReferenceRegistry } from '@/services/ai/sourceReferences'
-import { isModelContextOverflowError, packModelContext } from '@/services/ai/contextBudget'
 
 function createStreamContentFlusher(
   onUpdate: (content: string) => void,
@@ -137,6 +137,7 @@ export async function searchScopedKnowledge(
   contextTags: ContextTag[],
   signal?: AbortSignal,
   onProgress?: (progress: RagSearchProgress) => void,
+  maxContextBudget?: number | { maxChars?: number; maxTokens?: number },
 ): Promise<ScopedKnowledgeResult> {
   const scopeFilePaths = resolveScopeFilePaths(contextTags)
   if (scopeFilePaths.length === 0) {
@@ -171,7 +172,15 @@ export async function searchScopedKnowledge(
     }
   }
 
-  const contextResult = buildContextResult(results, 6000, { referenceIds: true })
+  const requestedBudget = typeof maxContextBudget === 'number'
+    ? maxContextBudget
+    : maxContextBudget?.maxTokens ?? maxContextBudget?.maxChars
+  // buildContextResult 的旧接口仍使用 UTF-16 字符；一字符一 token 是中文场景的保守换算。
+  const contextResult = buildContextResult(
+    results,
+    requestedBudget && requestedBudget > 0 ? Math.floor(requestedBudget) : 6000,
+    { referenceIds: true },
+  )
   const includedResults = contextResult.includedSources.map((source) => source.result)
   const sources = toRagSources(includedResults)
 
@@ -218,49 +227,51 @@ export async function streamFinalAnswer(options: {
   signal?: AbortSignal
   temperature?: number
   reasoningMode?: 'off' | 'on'
-  contextWindowTokens?: number
 }): Promise<void> {
   const filter = options.filterToolJson ?? false
-  const contextWindow = options.contextWindowTokens || 8192
 
-  for (const retryLevel of [0, 1] as const) {
-    const packed = packModelContext(options.messages, contextWindow, retryLevel)
-    try {
-      if (options.streamEnabled) {
-        const stream = options.client.streamChat({
-          messages: packed.messages,
-          maxTokens: packed.maxTokens,
-          signal: options.signal,
-          temperature: options.temperature,
-          reasoningMode: options.reasoningMode,
-        })
-        let accumulated = ''
-        const transform = (content: string) => filter ? hideLikelyToolJsonPrefix(content) : content
-        const flusher = createStreamContentFlusher(options.onUpdate, options.isCancelled, transform)
-        try {
-          for await (const chunk of stream) {
-            if (options.isCancelled()) break
-            accumulated += chunk.content
-            flusher.schedule(accumulated)
-            if (chunk.done) break
-          }
-        } finally {
-          flusher.flush()
+  const sendOnce = async (messages: ChatMessage[]) => {
+    if (options.streamEnabled) {
+      const stream = options.client.streamChat({
+        messages,
+        signal: options.signal,
+        temperature: options.temperature,
+        reasoningMode: options.reasoningMode,
+      })
+      let accumulated = ''
+      const transform = (content: string) => filter ? hideLikelyToolJsonPrefix(content) : content
+      const flusher = createStreamContentFlusher(options.onUpdate, options.isCancelled, transform)
+      try {
+        for await (const chunk of stream) {
+          if (options.isCancelled()) break
+          accumulated += chunk.content
+          flusher.schedule(accumulated)
+          if (chunk.done) break
         }
-      } else {
-        const response = await options.client.chat({
-          messages: packed.messages,
-          maxTokens: packed.maxTokens,
-          signal: options.signal,
-          temperature: options.temperature,
-          reasoningMode: options.reasoningMode,
-        })
-        if (!options.isCancelled()) options.onUpdate(filter ? hideLikelyToolJsonPrefix(response.content) : response.content)
+      } finally {
+        flusher.flush()
       }
       return
-    } catch (error) {
-      if (retryLevel === 1 || !isModelContextOverflowError(error) || options.isCancelled()) throw error
-      console.warn('[AI context] retrying with reduced anonymous budget', packed.diagnostics)
     }
+
+    const response = await options.client.chat({
+      messages,
+      signal: options.signal,
+      temperature: options.temperature,
+      reasoningMode: options.reasoningMode,
+    })
+    if (!options.isCancelled()) {
+      options.onUpdate(filter ? hideLikelyToolJsonPrefix(response.content) : response.content)
+    }
+  }
+
+  try {
+    await sendOnce(options.messages)
+    return
+  } catch (error) {
+    if (!isModelContextOverflowError(error) || options.isCancelled()) throw error
+    console.warn('[AI context] provider reported context overflow; retrying after dropping oldest turn')
+    const reduced = dropOldestCompleteTurns(options.messages)
+    await sendOnce(reduced)
   }
 }

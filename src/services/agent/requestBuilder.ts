@@ -60,6 +60,7 @@ export function buildEditTargetsContext(editTargets: AgentEditTarget[]): string 
 export function buildAgentRunRequest(options: {
   content: string
   messages: ChatMessage[]
+  modelHistory?: ChatMessage[]
   contextTags?: ContextTag[]
   tagContext: string
   memoryContext: string
@@ -72,7 +73,6 @@ export function buildAgentRunRequest(options: {
   onStreamContent?: (content: string) => void
   customPreferencePrompt?: string
   streamEnabled: boolean
-  contextWindowTokens?: number
 }): {
   request: AgentRunRequest
   editTargets: AgentEditTarget[]
@@ -99,7 +99,7 @@ export function buildAgentRunRequest(options: {
     originalRequest,
     request: {
       query,
-      chatHistory: prepareChatHistoryForModel(options.messages),
+      chatHistory: options.modelHistory || prepareChatHistoryForModel(options.messages),
       rawQuery: normalizedUserIntent,
       hasRecentEditContext: options.hasRecentEditContext,
       hasCurrentEditTarget: currentEditTargetCount > 0,
@@ -111,11 +111,9 @@ export function buildAgentRunRequest(options: {
       onStep: options.onStep,
       onStreamContent: options.onStreamContent,
       requiredCapabilities: options.routingDecision.required,
-      untrustedContexts,
       untrustedContext,
       customPreferencePrompt: options.customPreferencePrompt,
       streamEnabled: options.streamEnabled,
-      contextWindowTokens: options.contextWindowTokens,
       routingDecision: options.routingDecision,
     },
   }
