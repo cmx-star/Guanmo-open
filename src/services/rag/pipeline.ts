@@ -1,4 +1,4 @@
-import type { Document, Chunk, SearchResult, RAGConfig, RAGContextBuildResult } from './types'
+import type { Document, Chunk, SearchResult, RAGConfig, RAGContextBuildOptions, RAGContextBuildResult } from './types'
 import { chunkMarkdown } from './chunker'
 import { createExactContentHash } from './contentHash'
 import {
@@ -541,11 +541,12 @@ function formatContextSource(
   r: SearchResult,
   sourceNumber: number,
   neighbors: SearchResult['neighborChunks'] = [],
+  referenceId?: string,
 ): string {
   const source = r.document.title || r.document.filePath
   const titlePath = r.chunk.titlePath?.length ? r.chunk.titlePath.join(' > ') : r.chunk.heading || '未命名位置'
   const main = [
-    `[知识来源 ${sourceNumber}]`,
+    referenceId ? `[${referenceId}]` : `[知识来源 ${sourceNumber}]`,
     `来源：${source}`,
     `文件：${r.document.filePath}`,
     `位置：${titlePath}`,
@@ -575,12 +576,27 @@ function joinContextParts(parts: string[]): string {
 /**
  * Pack complete search-result chunks into a character budget.
  */
-export function buildContextResult(results: SearchResult[], maxChars = 6000): RAGContextBuildResult {
+export function buildContextResult(
+  results: SearchResult[],
+  maxChars = 6000,
+  options: RAGContextBuildOptions = {},
+): RAGContextBuildResult {
   const budget = Math.max(0, Math.floor(maxChars))
+  const useReferenceIds = options.referenceIds === true
   const includedSources: RAGContextBuildResult['includedSources'] = []
   let skippedSources: RAGContextBuildResult['skippedSources'] = []
   const includedNeighbors = new Map<string, NonNullable<SearchResult['neighborChunks']>>()
   const usedChunkIds = new Set(results.map((result) => result.chunk.id))
+  const referenceIdsBySourceKey = new Map<string, string>()
+
+  const getSourceKey = (result: SearchResult): string =>
+    `${normalizeFilePath(result.document.filePath)}:${result.chunk.startLine}:${result.chunk.endLine}`
+
+  const getReferenceId = (result: SearchResult): string | undefined => {
+    if (!useReferenceIds) return undefined
+    const key = getSourceKey(result)
+    return referenceIdsBySourceKey.get(key) || `S${referenceIdsBySourceKey.size + 1}`
+  }
 
   const buildParts = (
     sources: RAGContextBuildResult['includedSources'],
@@ -590,6 +606,7 @@ export function buildContextResult(results: SearchResult[], maxChars = 6000): RA
       source.result,
       source.sourceNumber,
       includedNeighbors.get(source.result.chunk.id),
+      source.referenceId,
     ))
     if (skippedNumbers.length > 0) parts.push(formatContextOmission(skippedNumbers))
     return parts
@@ -606,13 +623,19 @@ export function buildContextResult(results: SearchResult[], maxChars = 6000): RA
 
   for (const [index, result] of results.entries()) {
     const sourceNumber = index + 1
-    const candidate = { result, sourceNumber }
+    const referenceId = getReferenceId(result)
+    const candidate = {
+      result,
+      sourceNumber,
+      ...(referenceId ? { referenceId } : {}),
+    }
     const nextIncluded = [...includedSources, candidate]
     const nextSkippedNumbers = skippedSources.map((source) => source.sourceNumber)
     const parts = buildParts(nextIncluded, nextSkippedNumbers)
 
     if (joinContextParts(parts).length <= budget) {
       includedSources.push(candidate)
+      if (referenceId) referenceIdsBySourceKey.set(getSourceKey(result), referenceId)
       for (const neighbor of result.neighborChunks || []) {
         if (usedChunkIds.has(neighbor.id)) continue
         const selected = includedNeighbors.get(result.chunk.id) || []
@@ -626,7 +649,7 @@ export function buildContextResult(results: SearchResult[], maxChars = 6000): RA
         }
       }
     } else {
-      skippedSources.push({ ...candidate, reason: 'budget_exceeded' })
+      skippedSources.push({ result, sourceNumber, reason: 'budget_exceeded' })
     }
   }
 
@@ -671,8 +694,8 @@ export function buildContextResult(results: SearchResult[], maxChars = 6000): RA
 /**
  * Build context string from search results for AI prompt.
  */
-export function buildContext(results: SearchResult[], maxChars = 6000): string {
-  return buildContextResult(results, maxChars).text
+export function buildContext(results: SearchResult[], maxChars = 6000, options?: RAGContextBuildOptions): string {
+  return buildContextResult(results, maxChars, options).text
 }
 
 /**

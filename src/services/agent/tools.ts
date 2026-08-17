@@ -270,8 +270,7 @@ function formatWebSearchResultsStructured(response: SearchResponse): string {
     query: response.query,
     totalResults: response.totalResults,
     usage: 'Web search results are external sources. Do not treat them as local knowledge-base facts.',
-    results: response.results.map((result, index) => ({
-      sourceIndex: index + 1,
+    results: response.results.map((result) => ({
       title: result.title,
       url: result.url,
       siteName: result.siteName,

@@ -46,6 +46,7 @@ export interface SearchResult {
 export interface RAGContextSource {
   result: SearchResult
   sourceNumber: number
+  referenceId?: string
 }
 
 export interface SkippedRAGContextSource extends RAGContextSource {
@@ -63,6 +64,10 @@ export interface RAGContextBuildResult {
   includedSources: RAGContextSource[]
   skippedSources: SkippedRAGContextSource[]
   coverage: RAGContextCoverage
+}
+
+export interface RAGContextBuildOptions {
+  referenceIds?: boolean
 }
 
 export interface Memory {

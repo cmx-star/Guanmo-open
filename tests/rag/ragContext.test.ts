@@ -83,6 +83,22 @@ describe('RAG context packing', () => {
     expect(packed.skippedSources.map((source) => source.sourceNumber)).toEqual([2])
   })
 
+  it('assigns continuous stable IDs only to sources included in the model context', () => {
+    const first = createResult(1, '第一个短块')
+    const oversized = createResult(2, 'y'.repeat(800))
+    const third = createResult(3, '第三个短块')
+    const reference = buildContextResult([first, third], Number.MAX_SAFE_INTEGER, { referenceIds: true }).text
+    const packed = buildContextResult([first, oversized, third], reference.length + 80, { referenceIds: true })
+
+    expect(packed.includedSources.map((source) => [source.sourceNumber, source.referenceId])).toEqual([
+      [1, 'S1'],
+      [3, 'S2'],
+    ])
+    expect(packed.text.indexOf('[S1]')).toBeLessThan(packed.text.indexOf('[S2]'))
+    expect(packed.text).not.toContain('[知识来源')
+    expect(packed.skippedSources.map((source) => source.sourceNumber)).toEqual([2])
+  })
+
   it('returns stable empty coverage when even omission metadata does not fit', () => {
     const results = [createResult(1, 'a'.repeat(400)), createResult(2, 'b'.repeat(400))]
     const packed = buildContextResult(results, 20)

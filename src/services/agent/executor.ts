@@ -28,6 +28,13 @@ import {
 import { getAgentScopeContext } from '@/services/aiScope'
 import { BASE_SYSTEM_PROMPT, CONTEXT_SAFETY_PROMPT, CUSTOM_PROMPT_POLICY, buildUntrustedContextMessage } from '@/services/ai/systemPrompts'
 import {
+  createSourceReferenceRegistry,
+  findSourceReferenceId,
+  parseSourceReferences,
+  registerSourceReferences,
+  type SourceReferenceRegistry,
+} from '@/services/ai/sourceReferences'
+import {
   FILE_SUMMARY_ANSWER_PROMPT,
   LOCAL_RESEARCH_ANSWER_PROMPT,
   WEB_COMPARISON_ANSWER_PROMPT,
@@ -164,6 +171,47 @@ ${preference}`
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text
   return text.slice(0, maxLen) + `\n... (已截断，共 ${text.length} 字符)`
+}
+
+function truncateKnowledgeResult(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  try {
+    const parsed = JSON.parse(text)
+    if (!isPlainObject(parsed) || !Array.isArray(parsed.results)) return truncate(text, maxLen)
+    const totalResultCount = parsed.results.length
+    const included: unknown[] = []
+    for (const result of parsed.results) {
+      const candidate = JSON.stringify({
+        ...parsed,
+        resultCount: included.length + 1,
+        totalResultCount,
+        omittedResultCount: totalResultCount - included.length - 1,
+        results: [...included, result],
+      }, null, 2)
+      if (candidate.length > maxLen) break
+      included.push(result)
+    }
+    return JSON.stringify({
+      ...parsed,
+      status: included.length > 0 ? parsed.status : 'truncated',
+      resultCount: included.length,
+      totalResultCount,
+      omittedResultCount: totalResultCount - included.length,
+      results: included,
+    }, null, 2)
+  } catch {
+    return truncate(text, maxLen)
+  }
+}
+
+function truncateToolResultForModel(toolName: string, text: string, maxLen: number): string {
+  return toolName === 'search_knowledge'
+    ? truncateKnowledgeResult(text, maxLen)
+    : truncate(text, maxLen)
+}
+
+function resolveToolResultMaxChars(toolName: string): number {
+  return getToolTokenBudget(toolName)
 }
 
 function buildFinalAnswerMessages(messages: ChatMessage[], finalInstruction?: string): ChatMessage[] {
@@ -365,16 +413,83 @@ function extractSourcesFromToolResult(toolName: string, result: string): ChatMes
   return []
 }
 
-function addUniqueSources(target: ChatMessageSource[], sources: ChatMessageSource[]) {
-  const sourceKey = (source: ChatMessageSource) => source.kind === 'web'
-    ? `web:${source.url}`
-    : `local:${source.filePath}:${source.startLine}:${source.endLine}`
-  const seen = new Set(target.map(sourceKey))
-  for (const source of sources) {
-    const key = sourceKey(source)
-    if (seen.has(key)) continue
-    seen.add(key)
-    target.push(source)
+function withSourceReferenceId<T extends Record<string, unknown>>(value: T, id: string | undefined): T {
+  return id ? { ...value, referenceId: `[${id}]` } : value
+}
+
+function findSourceReferenceIdForToolPayload(
+  toolName: string,
+  payload: Record<string, unknown>,
+  registry: SourceReferenceRegistry,
+): string | undefined {
+  const parsed = toolName === 'read_selection_context'
+    ? { source: payload.source, chunks: [payload.chunk] }
+    : toolName === 'read_context_file'
+      ? { source: payload.source }
+      : { results: [payload] }
+  const source = extractSourcesFromToolResult(toolName, JSON.stringify(parsed))[0]
+  return source ? findSourceReferenceId(registry, source) : undefined
+}
+
+function annotateToolResultWithSourceReferences(
+  toolName: string,
+  result: string,
+  registry: SourceReferenceRegistry,
+): string {
+  if (!['search_knowledge', 'read_selection_context', 'read_context_file', 'web_search'].includes(toolName)) {
+    return result
+  }
+
+  try {
+    const parsed = JSON.parse(result)
+    if (!isPlainObject(parsed)) return result
+
+    if ((toolName === 'search_knowledge' || toolName === 'web_search') && Array.isArray(parsed.results)) {
+      return JSON.stringify({
+        ...parsed,
+        results: parsed.results.map((item) => {
+          if (!isPlainObject(item)) return item
+          const id = findSourceReferenceIdForToolPayload(toolName, item, registry)
+          return withSourceReferenceId(item, id)
+        }),
+      }, null, 2)
+    }
+
+    if (toolName === 'read_selection_context' && Array.isArray(parsed.chunks)) {
+      return JSON.stringify({
+        ...parsed,
+        chunks: parsed.chunks.map((chunk) => {
+          if (!isPlainObject(chunk)) return chunk
+          const id = findSourceReferenceIdForToolPayload(toolName, { source: parsed.source, chunk }, registry)
+          return withSourceReferenceId(chunk, id)
+        }),
+      }, null, 2)
+    }
+
+    if (toolName === 'read_context_file' && isPlainObject(parsed.source)) {
+      const id = findSourceReferenceIdForToolPayload(toolName, parsed, registry)
+      return JSON.stringify({
+        ...parsed,
+        source: withSourceReferenceId(parsed.source, id),
+      }, null, 2)
+    }
+  } catch {
+    return result
+  }
+
+  return result
+}
+
+export function prepareAgentToolResultForModel(
+  registry: SourceReferenceRegistry,
+  toolName: string,
+  result: string,
+): { registry: SourceReferenceRegistry; result: string } {
+  const sources = extractSourcesFromToolResult(toolName, result)
+  const nextRegistry = registerSourceReferences(registry, sources)
+  return {
+    registry: nextRegistry,
+    result: annotateToolResultWithSourceReferences(toolName, result, nextRegistry),
   }
 }
 
@@ -755,11 +870,20 @@ async function runAgentInternal({
   const steps: AgentStep[] = []
   let toolCalls = 0
   let editToolCalls = 0
-  const knowledgeSources: ChatMessageSource[] = []
+  let sourceRegistry = createSourceReferenceRegistry()
   const calledToolNames: string[] = []
   const selectionContextReadLevels = new Map<string, 1 | 2>()
   const readResultCache = new Map<string, Promise<ToolExecutionResult>>()
   const remainingDeadlineMs = () => Math.max(0, deadlineAt - Date.now())
+  const sourceMetadata = () => ({
+    sources: sourceRegistry.entries.map((entry) => entry.source),
+    sourceRegistry,
+  })
+  const prepareVisibleToolResult = (name: string, result: string): string => {
+    const prepared = prepareAgentToolResultForModel(sourceRegistry, name, result)
+    sourceRegistry = prepared.registry
+    return prepared.result
+  }
   const deadlineResult = (): AgentResult => ({
     answer: '',
     steps,
@@ -769,7 +893,7 @@ async function runAgentInternal({
       messages,
       '本轮已达到整次任务时限。请仅基于已有证据给出可确认的结论，并明确声明尚未取得或验证的信息。',
     ),
-    sources: knowledgeSources,
+    ...sourceMetadata(),
   })
   if (hasPrefetchedMemoryLookup) {
     calledToolNames.push('search_memory')
@@ -910,7 +1034,6 @@ async function runAgentInternal({
 
     for (const { name, result, rawResult, executed } of repairResults) {
       if (executed !== false) {
-        addUniqueSources(knowledgeSources, extractSourcesFromToolResult(name, rawResult || result))
         calledToolNames.push(name)
         toolCalls++
       }
@@ -920,9 +1043,11 @@ async function runAgentInternal({
         toolName: name,
         timestamp: Date.now(),
       })
+      const modelResult = truncateToolResultForModel(name, rawResult || result, resolveToolResultMaxChars(name))
+      const visibleModelResult = prepareVisibleToolResult(name, modelResult)
       messages.push({
         role: 'user',
-        content: `系统已补调 ${name} 工具。请依据结果回答：\n${result}`,
+        content: `系统已补调 ${name} 工具。请依据结果回答：\n${visibleModelResult}`,
       })
     }
 
@@ -977,6 +1102,7 @@ async function runAgentInternal({
         steps,
         toolCalls: 0,
         reason: 'error',
+        ...sourceMetadata(),
       }
     }
   }
@@ -985,7 +1111,7 @@ async function runAgentInternal({
   for (let i = 0; i < mergedConfig.maxSteps; i++) {
     if (signal?.aborted) {
       if (signal.reason === 'deadline') return deadlineResult()
-      return { answer: '已取消本次 Agent 请求。', steps, toolCalls, reason: 'error', sources: knowledgeSources }
+      return { answer: '已取消本次 Agent 请求。', steps, toolCalls, reason: 'error', ...sourceMetadata() }
     }
     if (toolCalls >= mergedConfig.maxToolCalls && (!requiresEditConfirmation || editToolCalls > 0)) {
       return {
@@ -997,7 +1123,7 @@ async function runAgentInternal({
           messages,
           '本轮已达到工具调用上限。请仅基于已有结果给出当前可确认的结论，并明确说明仍缺少的信息。',
         ),
-        sources: knowledgeSources,
+        ...sourceMetadata(),
       }
     }
 
@@ -1025,6 +1151,7 @@ async function runAgentInternal({
         steps,
         toolCalls,
         reason: 'error',
+        ...sourceMetadata(),
       }
     }
 
@@ -1086,16 +1213,18 @@ async function runAgentInternal({
 
       // 最终答案
       const cleanAnswer = stripToolCallJson(content)
+      const parsedAnswer = parseSourceReferences(cleanAnswer || content, sourceRegistry)
       if (cleanAnswer || content) {
         return {
-          answer: cleanAnswer || content,
+          answer: parsedAnswer.content,
           steps,
           toolCalls,
           reason: 'completed',
-          sources: knowledgeSources,
+          referencedSourceIds: parsedAnswer.referencedIds,
+          ...sourceMetadata(),
         }
       }
-      return { answer: '', steps, toolCalls, reason: 'completed', sources: knowledgeSources }
+      return { answer: '', steps, toolCalls, reason: 'completed', ...sourceMetadata() }
     }
 
     // 过滤工具调用 JSON 从思考步骤
@@ -1138,9 +1267,6 @@ async function runAgentInternal({
       const { name } = toolResult
       const executed = toolResult.executed !== false
       if (executed) {
-        addUniqueSources(knowledgeSources, extractSourcesFromToolResult(name, toolResult.rawResult || toolResult.result))
-      }
-      if (executed) {
         calledToolNames.push(name)
         toolCalls++
       }
@@ -1150,7 +1276,7 @@ async function runAgentInternal({
     }
 
     // 添加工具结果到消息
-    for (const { name, result, executed, reused } of toolResults) {
+    for (const { name, result, rawResult, executed, reused } of toolResults) {
       pushStep({
         type: 'observation',
         content: result,
@@ -1158,15 +1284,17 @@ async function runAgentInternal({
         timestamp: Date.now(),
       })
 
+      const modelResult = name === 'read_selection_context'
+        ? result
+        : truncateToolResultForModel(name, rawResult || result, resolveToolResultMaxChars(name))
+      const visibleModelResult = prepareVisibleToolResult(name, modelResult)
       messages.push({
         role: 'assistant',
         content: reused ? `复用本轮工具结果: ${name}` : executed === false ? `未执行工具: ${name}` : `调用工具: ${name}`,
       })
       messages.push({
         role: 'user',
-        content: name === 'read_selection_context'
-          ? `工具返回结果：\n${result}\n\n请根据以上信息继续思考或给出最终答案。`
-          : truncate(`工具返回结果：\n${result}\n\n请根据以上信息继续思考或给出最终答案。`, getToolTokenBudget(name)),
+        content: `工具返回结果：\n${visibleModelResult}\n\n请根据以上信息继续思考或给出最终答案。`,
       })
     }
 
@@ -1175,7 +1303,7 @@ async function runAgentInternal({
       (tr) => isPendingEditResult(tr.result) || isPendingActionResult(tr.result),
     )
     if (hasPendingConfirmation) {
-      return { answer: '', steps, toolCalls, reason: 'completed', sources: knowledgeSources }
+      return { answer: '', steps, toolCalls, reason: 'completed', ...sourceMetadata() }
     }
 
     // 智能裁剪历史（保留最近的用户消息和工具结果）
@@ -1242,7 +1370,7 @@ async function runAgentInternal({
       toolCalls,
       reason: 'completed',
       finalMessages: buildFinalAnswerMessages(messages, answerInstruction),
-      sources: knowledgeSources,
+      ...sourceMetadata(),
     }
   }
 
@@ -1254,7 +1382,7 @@ async function runAgentInternal({
       toolCalls,
       reason: 'max_steps',
       finalMessages: buildFinalAnswerMessages(messages, answerInstruction),
-      sources: knowledgeSources,
+      ...sourceMetadata(),
     }
   }
 
@@ -1263,7 +1391,7 @@ async function runAgentInternal({
     steps,
     toolCalls,
     reason: 'max_steps',
-    sources: knowledgeSources,
+    ...sourceMetadata(),
   }
 }
 

@@ -29,6 +29,7 @@ vi.mock('@/services/ai/aiClient', () => ({
 describe('Agent execution budget', () => {
   let runAgent: typeof import('@/services/agent/executor').runAgent
   let registerTool: typeof import('@/services/agent/toolRegistry').registerTool
+  let originalKnowledgeTool: ReturnType<typeof import('@/services/agent/toolRegistry').getTool>
   const executeAnonymousRead = vi.fn(async () => '匿名工具结果')
   const executeAnonymousList = vi.fn(async () => '匿名列表结果')
 
@@ -50,6 +51,7 @@ describe('Agent execution budget', () => {
     })
     runAgent = executor.runAgent
     registerTool = registry.registerTool
+    originalKnowledgeTool = registry.getTool('search_knowledge')
   })
 
   beforeEach(() => {
@@ -68,6 +70,7 @@ describe('Agent execution budget', () => {
       parameters: [],
       execute: executeAnonymousRead,
     })
+    if (originalKnowledgeTool) registerTool(originalKnowledgeTool)
   })
 
   it('直接复用工具后的模型答案，不再请求第三次最终综合', async () => {
@@ -102,6 +105,81 @@ describe('Agent execution budget', () => {
     expect(result.finalMessages).toBeUndefined()
     expect(onStreamContent).toHaveBeenNthCalledWith(1, '匿名')
     expect(onStreamContent).toHaveBeenNthCalledWith(2, '匿名最终答案')
+  })
+
+  it('工具返回后二次请求重新装箱且工具只执行一次', async () => {
+    const executeLongResult = vi.fn(async () => `完整来源内容：${'匿名证据'.repeat(2000)}`)
+    registerTool({
+      name: 'get_current_time',
+      description: '匿名长结果工具',
+      parameters: [],
+      execute: executeLongResult,
+    })
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [{ index: 0, name: 'get_current_time', arguments: '{}' }],
+      }],
+      [{ content: '基于证据的匿名答案', done: true }],
+    )
+
+    const result = await runAgent({
+      query: '匿名长工具请求',
+      candidateToolNames: ['get_current_time'],
+      contextWindowTokens: 8192,
+      streamEnabled: true,
+    })
+
+    expect(streamChat).toHaveBeenCalledTimes(2)
+    expect(executeLongResult).toHaveBeenCalledTimes(1)
+    const secondRequest = streamChat.mock.calls[1][0]
+    expect(secondRequest.tools?.some((tool) => tool.function.name === 'get_current_time')).toBe(true)
+    expect(secondRequest.messages.some((message) => message.content.includes('工具返回结果'))).toBe(true)
+    expect(secondRequest.messages[0].content).toContain('get_current_time')
+    expect(result.answer).toBe('基于证据的匿名答案')
+  })
+
+  it('知识库来源只包含实际装入模型的完整结果项', async () => {
+    const results = Array.from({ length: 8 }, (_, index) => ({
+      filePath: `D:\\anonymous\\source-${index + 1}.md`,
+      title: `匿名来源 ${index + 1}`,
+      chunkId: `chunk-${index + 1}`,
+      snippet: `匿名证据 ${index + 1}：${'内容'.repeat(100)}`,
+      titlePath: [],
+      startLine: index * 10 + 1,
+      endLine: index * 10 + 9,
+    }))
+    registerTool({
+      name: 'search_knowledge',
+      description: '匿名知识库检索',
+      parameters: [],
+      execute: vi.fn(async () => JSON.stringify({ status: 'ok', resultCount: results.length, results }, null, 2)),
+    })
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [{ index: 0, name: 'search_knowledge', arguments: '{}' }],
+      }],
+      [{ content: '匿名知识库答案', done: true }],
+    )
+
+    const result = await runAgent({
+      query: '匿名知识库问题',
+      candidateToolNames: ['search_knowledge'],
+      contextWindowTokens: 8192,
+      streamEnabled: true,
+    })
+
+    const toolMessage = streamChat.mock.calls[1][0].messages.find(
+      (message) => message.role === 'user' && message.content.startsWith('工具返回结果'),
+    )
+    const includedSources = results.filter((source) => toolMessage?.content.includes(source.filePath.replaceAll('\\', '\\\\')))
+    expect(includedSources.length).toBeGreaterThan(0)
+    expect(result.sources).toHaveLength(includedSources.length)
+    expect(result.sources.map((source) => source.kind === 'web' ? source.url : source.filePath))
+      .toEqual(includedSources.map((source) => source.filePath))
   })
 
   it('为同批次的每个工具分别发送执行阶段事件', async () => {

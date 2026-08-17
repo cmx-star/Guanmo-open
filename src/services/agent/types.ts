@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatMessageSource, ReadingScope } from '@/services/ai/types'
+import type { SourceReferenceId, SourceReferenceRegistry } from '@/services/ai/sourceReferences'
 import type { Capability, SelectionRequestKind } from './intentDetector'
 import type { AgentToolName } from './toolSelector'
 
@@ -59,6 +60,8 @@ export interface AgentResult {
   reason: AgentResultReason
   finalMessages?: ChatMessage[]
   sources?: ChatMessageSource[]
+  sourceRegistry?: SourceReferenceRegistry
+  referencedSourceIds?: SourceReferenceId[]
 }
 
 export interface AgentTaskContext {

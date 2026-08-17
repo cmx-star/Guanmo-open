@@ -22,6 +22,7 @@ import type {
   LocalChatMessageSource,
   ActionProposal,
 } from '@/services/ai/types'
+import { resolveStoredSourceReferences, type SourceReferenceId } from '@/services/ai/sourceReferences'
 import { AI_SHORTCUT_SUBMIT_EVENT } from '@/services/aiContext'
 import { applyPendingEditCommand } from '@/services/pendingEditCommand'
 import { saveAssistantMessageAsMarkdown } from '@/services/assistantMessageExport'
@@ -698,6 +699,7 @@ export function AiPanel({ fullscreenDragHandleProps }: AiPanelProps = {}) {
                   isLast={i === visibleMessages.length - 1}
                   streaming={streaming}
                   sources={msg.sources}
+                  referencedSourceIds={msg.referencedSourceIds}
                   onOpenSource={handleOpenRagSource}
                   onSaveAsMarkdown={
                     msg.role === 'assistant'
@@ -1431,6 +1433,7 @@ export const ChatBubble = memo(function ChatBubble({
   isLast,
   streaming,
   sources,
+  referencedSourceIds,
   onOpenSource,
   onSaveAsMarkdown,
   onSaveAsArtifact,
@@ -1440,6 +1443,7 @@ export const ChatBubble = memo(function ChatBubble({
   isLast: boolean
   streaming: boolean
   sources?: ChatMessageSource[]
+  referencedSourceIds?: SourceReferenceId[]
   onOpenSource?: (source: LocalChatMessageSource) => void
   onSaveAsMarkdown?: () => void
   onSaveAsArtifact?: (type: ReadingArtifactType) => void
@@ -1447,6 +1451,10 @@ export const ChatBubble = memo(function ChatBubble({
   const isUser = role === 'user'
   const isEmpty = !content && isLast && streaming
   const isAssistantStreaming = !isUser && isLast && streaming
+  const displayedSources = useMemo(
+    () => resolveStoredSourceReferences(sources, referencedSourceIds),
+    [referencedSourceIds, sources],
+  )
   const bubbleRef = useRef<HTMLDivElement>(null)
   const saveMenuRef = useRef<HTMLDivElement>(null)
   const saveControlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1559,8 +1567,12 @@ export const ChatBubble = memo(function ChatBubble({
           ) : (
             <AssistantMarkdown content={content} />
           )}
-          {!isUser && sources && sources.length > 0 && onOpenSource && (
-            <MessageSources sources={sources} onOpenSource={onOpenSource} />
+          {!isUser && displayedSources.sources.length > 0 && onOpenSource && (
+            <MessageSources
+              sources={displayedSources.sources}
+              hasValidReferences={displayedSources.hasValidReferences}
+              onOpenSource={onOpenSource}
+            />
           )}
         </div>
         {canSave && (
@@ -1664,7 +1676,15 @@ function AiAvatar({
   )
 }
 
-function MessageSources({ sources, onOpenSource }: { sources: ChatMessageSource[]; onOpenSource: (source: LocalChatMessageSource) => void }) {
+function MessageSources({
+  sources,
+  hasValidReferences,
+  onOpenSource,
+}: {
+  sources: ChatMessageSource[]
+  hasValidReferences: boolean
+  onOpenSource: (source: LocalChatMessageSource) => void
+}) {
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -1677,7 +1697,7 @@ function MessageSources({ sources, onOpenSource }: { sources: ChatMessageSource[
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}>
           <path d="M9 18l6-6-6-6" />
         </svg>
-        <span>Sources {sources.length}</span>
+        <span>{hasValidReferences ? '引用来源' : '检索来源/未确认引用'} {sources.length}</span>
       </button>
       {expanded && (
         <div className="mt-2 space-y-1">
