@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ActionProposal, ChatMessage, ChatMessageContextMeta, ChatMessageSource, EditConfirmation } from '@/services/ai/types'
-import type { SourceReferenceId } from '@/services/ai/sourceReferences'
+import { normalizeSafeWebSourceUrl, type SourceReferenceId } from '@/services/ai/sourceReferences'
 import type { AgentStep, AgentTaskContext } from '@/services/agent/types'
 import type { ContextTag } from '@/types/contextTag'
 import { MAX_CONTEXT_TAGS } from '@/types/contextTag'
@@ -538,10 +538,12 @@ function sanitizeMessageSources(value: unknown): ChatMessageSource[] | undefined
     if (!isPlainObject(item)) return []
     if (item.kind === 'web') {
       if (typeof item.url !== 'string') return []
+      const url = normalizeSafeWebSourceUrl(item.url)
+      if (!url) return []
       return [{
         kind: 'web' as const,
-        title: typeof item.title === 'string' && item.title.trim() ? item.title : item.url,
-        url: item.url,
+        title: typeof item.title === 'string' && item.title.trim() ? item.title : url,
+        url,
         siteName: typeof item.siteName === 'string' ? item.siteName : undefined,
         publishedAt: typeof item.publishedAt === 'string' ? item.publishedAt : undefined,
         snippet: typeof item.snippet === 'string' ? item.snippet : undefined,

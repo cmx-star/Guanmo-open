@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createSourceReferenceRegistry,
+  normalizeSafeWebSourceUrl,
   parseSourceReferences,
   registerSourceReferences,
   resolveStoredSourceReferences,
@@ -48,6 +49,20 @@ describe('source reference registry', () => {
     expect(registry.entries.map((entry) => entry.id)).toEqual(['S1', 'S2', 'S3'])
     expect(registry.entries[0].source).toEqual(localSource)
     expect(registry.entries[2].source).toEqual(webSource)
+  })
+
+  it('只注册可安全打开的 HTTP(S) 网页来源', () => {
+    expect(normalizeSafeWebSourceUrl(' HTTPS://EXAMPLE.COM:443/anonymous '))
+      .toBe('https://example.com/anonymous')
+    expect(normalizeSafeWebSourceUrl('javascript:alert(1)')).toBeNull()
+    expect(normalizeSafeWebSourceUrl('file:///C:/anonymous.md')).toBeNull()
+    expect(normalizeSafeWebSourceUrl('not a url')).toBeNull()
+
+    const registry = createSourceReferenceRegistry([
+      webSource,
+      { ...webSource, url: 'javascript:alert(1)' },
+    ])
+    expect(registry.entries).toEqual([{ id: 'S1', source: webSource }])
   })
 
   it('reuses IDs when sources arrive from separate tool calls without mutating the prior registry', () => {
@@ -125,6 +140,12 @@ describe('source reference registry', () => {
     })
     expect(resolveStoredSourceReferences([localSource, webSource], ['S9'])).toEqual({
       sources: [localSource, webSource],
+      hasValidReferences: false,
+    })
+    expect(resolveStoredSourceReferences([
+      { ...webSource, url: 'javascript:alert(1)' },
+    ], undefined)).toEqual({
+      sources: [],
       hasValidReferences: false,
     })
   })

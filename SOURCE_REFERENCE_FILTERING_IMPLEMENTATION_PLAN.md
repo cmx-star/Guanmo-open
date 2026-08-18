@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- 项目状态：进行中
+- 项目状态：已完成
 - 当前阶段：阶段 4｜兼容持久化、展示与最终验收
-- 阶段状态：进行中
-- 上次执行结果：新增可选 `referencedSourceIds`；聊天 metadata 保存/恢复完整候选来源和引用 ID；Agent/Direct 接线改为保留完整来源并单独保存合法引用；AiPanel 对合法引用显示“引用来源”，旧消息和无引用显示“检索来源/未确认引用”
-- 验证结果：阶段 4 定向 Vitest 6 个文件共 77 项通过；`npm run test:runtime-schemas`、`npm run typecheck`、`npm run lint`（38 个 warning、0 error）、`npm run build:desktop`、`npm run check:bundle:desktop`、`git diff --check` 通过
-- 本阶段剩余：隔离 Tauri 中完成默认/窄宽度/长标题/混合来源/历史恢复的真实视觉与跳转验收；自动检查不能替代该人工门禁
+- 阶段状态：已完成
+- 上次执行结果：完成安全 URL 边界与最终隔离桌面验收；合法引用、完整候选、旧消息、无来源、长标题、混合来源、本地行号跳转和重启恢复均满足契约
+- 验证结果：阶段 4 定向 Vitest 6 个文件共 78 项通过；`npm run test:runtime-schemas`、`npm run typecheck`、`npm run lint`（40 个既有 warning、0 error）、`npm run build:desktop`、`npm run check:bundle:desktop`、`git diff --check` 通过；隔离 Tauri 验收通过
+- 本阶段剩余：无
 - 本阶段允许修改：阶段 4 计划中列出的 ChatMessage 可选字段、metadata 编解码、来源展示、导出/阅读产物边界及直接测试范围
 - 阻塞问题：无
 - 下一阶段：无（阶段 4 为本任务最后阶段）
@@ -247,7 +247,7 @@ git diff --check
 
 ### 阶段 4｜兼容持久化、展示与最终验收
 
-- 状态：进行中
-- 完成内容：新增可选 `ChatMessage.referencedSourceIds`；chat metadata 保存和恢复完整候选来源及引用 ID；Direct/Agent 路径保留完整候选来源并单独更新合法引用；AiPanel 对合法引用显示“引用来源”，旧消息和无引用显示“检索来源/未确认引用”；导出和阅读成果继续使用完整来源快照。
-- 验证结果：6 个定向 Vitest 文件共 77 项通过；`npm run test:runtime-schemas`、`npm run typecheck`、`npm run lint`（38 个 warning、0 error）、`npm run build:desktop`、`npm run check:bundle:desktop`、`git diff --check` 通过。
-- 遗留问题：尚未完成隔离 Tauri 的默认/窄宽度/长标题/混合来源/历史恢复真实视觉与跳转验收；完成后才能将本阶段标记为已完成。
+- 状态：已完成
+- 完成内容：新增可选 `ChatMessage.referencedSourceIds`；chat metadata 保存和恢复完整候选来源及引用 ID；Direct/Agent 路径保留完整候选来源并单独更新合法引用；AiPanel 对合法引用显示“引用来源”，旧消息和无引用显示“检索来源/未确认引用”；导出和阅读成果继续使用完整来源快照；网页来源在注册、恢复和解码边界仅接受 HTTP(S)。
+- 验证结果：6 个定向 Vitest 文件共 78 项通过；`npm run test:runtime-schemas`、`npm run typecheck`、`npm run lint`（40 个既有 warning、0 error）、`npm run build:desktop`、`npm run check:bundle:desktop`、`git diff --check` 通过；专用 identifier `com.guanmo.app.codex-stage14-20260818` 隔离 Tauri 在默认/窄宽度/长标题/混合来源/本地 L8–10 跳转/重启恢复场景通过。
+- 遗留问题：无。

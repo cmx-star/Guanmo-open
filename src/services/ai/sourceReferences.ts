@@ -35,20 +35,22 @@ function isValidLineRange(startLine: unknown, endLine: unknown): boolean {
     && endLine >= startLine
 }
 
-function normalizeSourceUrl(url: string): string {
+export function normalizeSafeWebSourceUrl(url: string): string | null {
   const trimmed = url.trim()
-  if (!trimmed) return ''
+  if (!trimmed) return null
 
   try {
-    return new URL(trimmed).toString()
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    return parsed.toString()
   } catch {
-    return trimmed
+    return null
   }
 }
 
 function getSourceIdentity(source: ChatMessageSource): string | null {
   if (source.kind === 'web') {
-    const url = normalizeSourceUrl(source.url)
+    const url = normalizeSafeWebSourceUrl(source.url)
     return url ? `web:${url}` : null
   }
 
@@ -140,7 +142,9 @@ export function resolveStoredSourceReferences(
   sources: readonly ChatMessageSource[] | undefined,
   referencedIds: readonly SourceReferenceId[] | undefined,
 ): StoredSourceReferenceSelection {
-  const candidates = [...(sources ?? [])]
+  const candidates = (sources ?? []).filter((source) => (
+    source.kind !== 'web' || normalizeSafeWebSourceUrl(source.url) !== null
+  ))
   if (!referencedIds?.length) {
     return { sources: candidates, hasValidReferences: false }
   }
