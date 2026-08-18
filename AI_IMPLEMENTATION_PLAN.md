@@ -5,15 +5,16 @@
 ## 当前状态
 
 - 项目状态：进行中
-- 当前阶段：阶段 14｜结论级来源引用
-- 阶段状态：未开始
-- 上次执行结果：阶段 11–13 已完成；HTTP 有界背压、RAG 性能档位调度、Reference/Footnote/HTML 跨块语义虚拟化已实现并通过隔离桌面验收
-- 验证结果：HTTP Rust 9/9、RAG Rust 5/5（1 项真实用户库测试按设计忽略）、Markdown 48/48、RAG 调度 3/3；AI HTTP、app warmup、typecheck、定向 ESLint、Rust fmt、desktop build、`git diff --check` 通过；隔离 Tauri 高速流、性能调度和三类长文 Markdown 验收通过
-- 本阶段剩余：完成阶段 14 全部任务
-- 本阶段允许修改：按阶段 14 实施前核实精确文件范围
+- 当前阶段：阶段 15｜路由与 Prompt 评测闭环
+- 阶段状态：已完成
+- 上次执行结果（阶段 15）：新增 `src/services/ai/promptVersions.ts`（路由规则 v1 + Prompt v1 版本元数据、8 段 FNV-1a 分段指纹与组合指纹、评测配置快照与 A/B 口径比较）；新增匿名固定回归集 `tests/agent/fixtures/promptEvaluation.json`（33 案例 + 12 路由探针，全部合成数据）；新增 `scripts/prompt-offline-evaluation.ts` 与 `scripts/run-prompt-offline-evaluation.mjs` 离线确定性评测 runner（`npm run test:prompt-eval`）；新增 `tests/agent/promptVersioning.test.ts` 12 项版本/口径/匿名性测试
+- 验证结果（阶段 15 基线）：Direct 误判 0/9、Agent 误判 1/24（selection-format）、能力漏选 0/33、能力多选 4/33、工具解析 12/12、平均候选工具 1.91；延迟：路由 p50 0.917ms/p95 1.498ms、Prompt 组装 p50 0.001ms、工具解析 p50 0.054ms；A/B 口径：同配置可重复、Prompt 变体可检出、异配置拒绝归因
+- 验证结果（阶段 15 检查）：`npm run test:prompt-eval`、`npm run test:routing-matrix`（155/155）、`npm run test:agent-parser`、定向 Vitest promptVersioning+aiChatOrchestration（16/16）、`npm run typecheck`、定向 ESLint（0 error）、`git diff --check` 全部通过
+- 本阶段剩余：无
+- 本阶段允许修改：阶段 15 已完成，不再开放修改
 - 阻塞问题：无
-- 下一阶段：阶段 15｜路由与 Prompt 评测闭环
-- Git 状态：分支 `codex/defect-capability-fixes`；阶段 11–13 任务文件纳入本次本地提交，未推送
+- 下一阶段：阶段 16｜条件项审计与总体验收
+- Git 状态：分支 `main`；阶段 15 修改（promptVersions、评测 runner、promptVersioning 测试、package.json 脚本、本文件）尚未提交，未推送；	ests/agent/fixtures/promptEvaluation.json 受 .gitignore 的 *.json 规则影响，提交时需 git add -f（与既有 	ests/rag/fixtures/offlineEvaluation.json 跟踪方式一致）；工作区存在其他用户未提交修改，已按约定避开
 
 ## 项目目标
 
@@ -192,36 +193,36 @@
 
 ### 目标
 
-只完成 SOURCE-01：为本轮真实工具结果分配稳定来源 ID，校验回答中的引用并支持定位到文件行号或网页。
+只完成 PROMPT-01：为路由规则和 Prompt 建立版本号、匿名固定回归集及可比较的 A/B 结果。
 
 ### 允许修改
 
-- Agent/Direct 来源协议、运行时解码、回答渲染与来源打开、直接测试
+- 路由/Prompt 版本元数据、评测 runner、匿名诊断和直接测试
 - `AI_IMPLEMENTATION_PLAN.md`
 
 ### 实施任务
 
-1. 冻结本轮来源 ID、引用校验和旧回答来源兼容契约。
-2. 将 Direct 与 Agent 真实工具结果映射为稳定来源，拒绝模型生成的未知来源 ID。
-3. 渲染已采用来源并支持打开本地文件行号或网页。
-4. 验证无来源回答不显示占位，旧回答级来源继续兼容。
+1. 冻结当前路由规则、Prompt 内容、模型配置和指标口径。
+2. 为路由与 Prompt 建立兼容的版本元数据，不修改用户数据。
+3. 建立匿名固定回归集和可重复 A/B runner。
+4. 输出 Direct/Agent 误判、能力漏选/多选、工具成功率、调用数与延迟对比。
 
 ### 验收标准
 
-- [ ] 引用 ID 只来自本轮真实工具结果，未知 ID 不展示为已采用来源。
-- [ ] 本地来源可定位文件行号，网页来源可安全打开。
-- [ ] 旧回答级来源继续兼容，无来源回答不显示占位。
-- [ ] reading quality/source/AI panel 定向测试、runtime schema、typecheck、desktop build、隔离 Tauri 来源跳转验收与 diff 检查通过。
+- [x] 路由与 Prompt 版本可追溯，版本切换不修改用户数据。
+- [x] 匿名固定集可重复比较同模型、同配置下的 A/B 结果。
+- [x] 记录 Direct/Agent 误判率、能力漏选/多选率、工具成功率、调用数和延迟。
+- [x] routing matrix、Agent parser/orchestration、Prompt 评测 runner、typecheck 与 diff 检查通过。
 
 ### 检查命令
 
-按阶段 14 冻结精确调用链后回填，至少包含 reading quality/source/AI panel 定向测试、runtime schema、typecheck、desktop build、隔离 Tauri 来源跳转验收和 `git diff --check`。
+- 检查命令：`npm run test:prompt-eval`、`npm run test:routing-matrix`、`npm run test:agent-parser`、`npx vitest run tests/agent/promptVersioning.test.ts tests/agent/aiChatOrchestration.test.ts`、`npm run typecheck`、定向 ESLint（`src/services/ai/promptVersions.ts`、`tests/agent/promptVersioning.test.ts`）、`git diff --check`。
 
 ### 禁止事项
 
-- 不自动生成不存在的引用或修改旧聊天正文。
-- 不把未引用候选展示为已采用来源。
-- 不提前实施阶段 15 的路由与 Prompt 评测。
+- 不在不同模型或不同配置之间直接归因 Prompt 收益。
+- 不为评测引入 Agent 框架、checkpoint 或用户数据采集。
+- 不提前实施阶段 16 的条件项审计。
 - 不修改或夹带已有无关工作区文件。
 - 不自动提交、推送、打 tag、创建 Release 或 PR。
 
@@ -317,6 +318,20 @@
 - 完成内容：Reference 定义注入可视块解析上下文；Footnote 共享定义并只渲染一个脚注区；自包含 HTML 按块虚拟化，跨块未闭合 HTML 保留整篇同步兼容；目录、定位、编辑 offset 与高度模型沿用原链路
 - 验证结果：Markdown 定向 48/48、typecheck、定向 ESLint、desktop build、`git diff --check` 通过，构建无预览 Worker；隔离 Tauri 中 Reference 18 块、Footnote 11 块且唯一脚注区、自包含 HTML 18 块，跨块 HTML 保持 whole 模式
 - 遗留问题：无
+
+### 阶段 14｜结论级来源引用
+
+- 状态：已完成
+- 完成内容：Direct/Agent 为实际进入模型的本地与 Web 来源分配本轮稳定 `S1...Sn`；只接受正文中存在于注册表的引用 ID；完整候选来源与可选引用子集兼容持久化；UI 区分“引用来源”和“检索来源/未确认引用”；Web 来源仅允许安全的 HTTP(S) URL，本地来源复用授权与行号定位
+- 验证结果：定向 Vitest 6 文件 78/78、runtime schema、typecheck、Lint 0 error（40 个既有 warning）、desktop build 与 bundle budget、`git diff --check` 通过；专用 identifier `com.guanmo.app.codex-stage14-20260818` 隔离 Tauri 在 1440×900/820×700、长标题、混合来源、本地 L8–10 跳转和重启恢复场景通过
+- 遗留问题：无
+
+### 阶段 15｜路由与 Prompt 评测闭环
+
+- 状态：已完成
+- 完成内容：建立路由规则 v1 与 Prompt v1 版本元数据（8 个 Prompt 段分段指纹 + 组合指纹，FNV-1a，只读不修改用户数据）；匿名固定回归集 33 案例 + 12 探针（全合成文本，无真实用户数据）；离线确定性评测 runner（温度 0、topP 1、不调用真实模型）输出 Direct/Agent 误判率、能力漏选/多选率、工具解析成功率、平均候选工具数、路由/Prompt 组装/工具解析延迟（p50/p95/max）及路由行为指纹；A/B 口径校验：同配置可重复、Prompt 变体可检出、异配置拒绝归因
+- 验证结果：`npm run test:prompt-eval` 通过（基线：Direct 误判 0/9、Agent 误判 1/24、能力漏选 0/33、能力多选 4/33、工具解析 12/12、平均候选 1.91；路由决策 p50 0.917ms/p95 1.498ms）；`npm run test:routing-matrix` 155/155、`npm run test:agent-parser`、定向 Vitest 16/16、`npm run typecheck`、定向 ESLint 0 error、`git diff --check` 通过
+- 遗留问题：selection-format 记为 Agent 误判、4 个弱边界案例存在能力多选（与 routingMatrix 既有差异清单一致），作为 v1 基线记录，本阶段不调整路由规则；scripts/*.mjs 的 no-undef 为既有 lint 口径差异（项目 lint 门禁不含 scripts 目录，阶段 14 已提交的 rag runner 同样如此），未修改 eslint.config.js
 
 ## 新窗口执行提示词
 
