@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import App from '@app-entry'
 import './styles/global.css'
+import './styles/startupShell.css'
 import { isTauri } from './hooks/useTauri'
 import { markStartupPoint } from './services/startupPerformance'
 
@@ -11,12 +12,6 @@ import { markStartupPoint } from './services/startupPerformance'
 markStartupPoint('app-module-ready')
 markStartupPoint('main-module-evaluated')
 markStartupPoint('frontend-bootstrap')
-
-if (isTauri()) {
-  void getCurrentWindow().show().catch((error) => {
-    console.error('[Startup] Failed to show main window:', error)
-  })
-}
 
 const STARTUP_SHELL_ID = 'guanmo-startup-shell'
 
@@ -34,13 +29,27 @@ function StartupShellBoundary({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-markStartupPoint('create-root-start')
-const root = ReactDOM.createRoot(document.getElementById('root')!)
-markStartupPoint('react-render-start')
-root.render(
-  <React.StrictMode>
-    <StartupShellBoundary>
-      <App />
-    </StartupShellBoundary>
-  </React.StrictMode>,
-)
+async function bootstrap() {
+  if (isTauri()) {
+    // 桌面端：等待主窗口真正可见后再挂载 React，避免 CodeMirror 编辑器 / Markdown 预览
+    // 在窗口可见前测量到 0 尺寸（生产构建下时序竞争导致正文空白、无语法高亮、无法滚动）。
+    try {
+      await getCurrentWindow().show()
+    } catch (error) {
+      console.error('[Startup] Failed to show main window:', error)
+    }
+  }
+
+  markStartupPoint('create-root-start')
+  const root = ReactDOM.createRoot(document.getElementById('root')!)
+  markStartupPoint('react-render-start')
+  root.render(
+    <React.StrictMode>
+      <StartupShellBoundary>
+        <App />
+      </StartupShellBoundary>
+    </React.StrictMode>,
+  )
+}
+
+void bootstrap()
