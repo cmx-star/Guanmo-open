@@ -8,6 +8,7 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     sync::Mutex,
+    time::Duration,
 };
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_fs::FsExt;
@@ -29,6 +30,20 @@ const ALLOWED_TEXT_FILE_EXTENSIONS: [&str; 11] = [
 const ALLOWED_IMAGE_FILE_EXTENSIONS: [&str; 7] =
     ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 const OPEN_FILES_EVENT: &str = "guanmo:open-files";
+const MAIN_WINDOW_REVEAL_FALLBACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn reveal_main_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
+    if let Err(err) = window.show() {
+        eprintln!("failed to show main window: {err}");
+        return;
+    }
+    if let Err(err) = window.unminimize() {
+        eprintln!("failed to unminimize main window: {err}");
+    }
+    if let Err(err) = window.set_focus() {
+        eprintln!("failed to focus main window: {err}");
+    }
+}
 
 #[derive(Default)]
 struct FsAccessState {
@@ -1338,9 +1353,9 @@ pub fn run() {
                 let _ = app.emit(OPEN_FILES_EVENT, ());
             }
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+                if window.is_visible().unwrap_or(false) {
+                    reveal_main_window(&window.as_ref().window());
+                }
             }
         }));
     }
@@ -1363,6 +1378,17 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(err) = restore_persisted_file_access(&app_handle) {
                     eprintln!("failed to restore persisted file access: {err}");
+                }
+            });
+
+            let fallback_app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(MAIN_WINDOW_REVEAL_FALLBACK_TIMEOUT);
+                if let Some(window) = fallback_app_handle.get_webview_window("main") {
+                    if !window.is_visible().unwrap_or(false) {
+                        eprintln!("main window page load timed out; revealing fallback window");
+                        reveal_main_window(&window.as_ref().window());
+                    }
                 }
             });
             Ok(())

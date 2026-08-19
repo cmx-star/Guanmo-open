@@ -563,6 +563,11 @@ export function EditorArea() {
           surface: 'editor',
           charCount: activeTab.content.length,
         })
+        markStartupPoint('editor-first-visible', {
+          charCount: activeTab.content.length,
+          mode: viewMode,
+          policy: modePerformancePolicy,
+        })
         if (import.meta.env.DEV) {
           eventMarker.mark('editor-first-visible', {
             charCount: activeTab.content.length,
@@ -588,6 +593,11 @@ export function EditorArea() {
         markStartupPoint('active-document-first-visible', {
           surface: 'preview',
           charCount: activeTab.content.length,
+        })
+        markStartupPoint('preview-first-visible', {
+          charCount: activeTab.content.length,
+          mode: viewMode,
+          policy: modePerformancePolicy,
         })
         if (import.meta.env.DEV) {
           eventMarker.mark('preview-first-visible', {
@@ -1103,6 +1113,7 @@ export function EditorArea() {
     }
     if (leftPreviewVisible) {
       reportPreviewSwitchPerformance(activeTab.id, restoreStartedAt)
+      markStartupPoint('preview-render-complete', { mode: viewMode })
       eventMarker.mark('preview-render-complete', { mode: viewMode })
     }
   }, [

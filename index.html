@@ -1,13 +1,177 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="light" data-theme-id="warm">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>观墨 - AI Markdown 知识管理</title>
-    <script>performance.mark('guanmo:startup:frontend-bootstrap')</script>
+    <script id="guanmo-startup-theme">
+      performance.mark('guanmo:startup:html-start');performance.mark('guanmo:startup:frontend-bootstrap');
+      (() => {
+        const themeIds = ['warm', 'light', 'dark', 'paper', 'github-light']
+        let themeId = 'warm'
+        let hasPersistedTheme = false
+        try {
+          const persisted = JSON.parse(localStorage.getItem('guanmo-settings') || 'null')
+          const appearance = persisted && persisted.state && persisted.state.appearance
+          if (appearance && themeIds.includes(appearance.themeId)) {
+            themeId = appearance.themeId
+            hasPersistedTheme = true
+          } else if (appearance && appearance.theme === 'dark') {
+            themeId = 'dark'
+            hasPersistedTheme = true
+          } else if (appearance && appearance.theme === 'light') {
+            themeId = appearance.lightPalette === 'plain' ? 'light' : 'warm'
+            hasPersistedTheme = true
+          }
+        } catch (_) {
+          // 损坏的旧设置由 Zustand 既有兼容逻辑处理；启动壳使用安全默认值。
+        }
+        if (!hasPersistedTheme) {
+          try {
+            const webTheme = localStorage.getItem('guanmo-web-theme')
+            if (webTheme === 'dark' || webTheme === 'light') themeId = webTheme
+          } catch (_) {
+            // localStorage 不可用时保留默认暖色主题。
+          }
+        }
+        const root = document.documentElement
+        root.dataset.themeId = themeId
+        root.dataset.theme = themeId === 'dark' ? 'dark' : 'light'
+        root.style.colorScheme = themeId === 'dark' ? 'dark' : 'light'
+      })()
+    </script>
+    <style>
+      /* Startup Shell：静态骨架，颜色同步用户持久化主题；React 首次 commit 后由 main.tsx 移除 */
+      :root {
+        --gmss-canvas: #f8f4e8;
+        --gmss-surface: #f7f3df;
+        --gmss-border: #f0ece2;
+        --gmss-text: #794f27;
+        --gmss-placeholder: rgba(121, 79, 39, 0.08);
+        --gmss-placeholder-strong: rgba(121, 79, 39, 0.12);
+      }
+      :root[data-theme-id='light'] {
+        --gmss-canvas: #ffffff;
+        --gmss-surface: #ffffff;
+        --gmss-border: #f1f3f5;
+        --gmss-text: #1f2937;
+        --gmss-placeholder: rgba(31, 41, 55, 0.06);
+        --gmss-placeholder-strong: rgba(31, 41, 55, 0.1);
+      }
+      :root[data-theme-id='dark'] {
+        --gmss-canvas: #15130f;
+        --gmss-surface: #1d1a15;
+        --gmss-border: #2d271f;
+        --gmss-text: #eee4d2;
+        --gmss-placeholder: rgba(224, 190, 132, 0.1);
+        --gmss-placeholder-strong: rgba(224, 190, 132, 0.16);
+      }
+      :root[data-theme-id='paper'] {
+        --gmss-canvas: #f1eadc;
+        --gmss-surface: #f7f0e3;
+        --gmss-border: #e9dfcf;
+        --gmss-text: #4e4033;
+        --gmss-placeholder: rgba(78, 64, 51, 0.07);
+        --gmss-placeholder-strong: rgba(78, 64, 51, 0.12);
+      }
+      :root[data-theme-id='github-light'] {
+        --gmss-canvas: #f5f7f9;
+        --gmss-surface: #ffffff;
+        --gmss-border: #eaeef2;
+        --gmss-text: #20262d;
+        --gmss-placeholder: rgba(32, 38, 45, 0.06);
+        --gmss-placeholder-strong: rgba(32, 38, 45, 0.1);
+      }
+      #guanmo-startup-shell {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        background: var(--gmss-canvas);
+        pointer-events: none;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      }
+      .gmss-title {
+        height: 38px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        padding-left: 12px;
+        background: var(--gmss-surface);
+        border-bottom: 1px solid var(--gmss-border);
+      }
+      .gmss-brand {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: var(--gmss-text);
+      }
+      .gmss-body {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .gmss-rail {
+        width: 56px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 0;
+        background: var(--gmss-surface);
+        border-right: 1px solid var(--gmss-border);
+      }
+      .gmss-tool {
+        width: 20px;
+        height: 20px;
+        border-radius: 5px;
+        background: var(--gmss-placeholder-strong);
+      }
+      .gmss-main {
+        flex: 1;
+        padding: 24px 32px;
+        background: var(--gmss-surface);
+      }
+      .gmss-line {
+        height: 10px;
+        border-radius: 5px;
+        background: var(--gmss-placeholder);
+        margin-bottom: 12px;
+      }
+      .gmss-line-heading {
+        height: 14px;
+        width: 32%;
+        background: var(--gmss-placeholder-strong);
+      }
+      .gmss-line-1 { width: 46%; }
+      .gmss-line-2 { width: 72%; }
+      .gmss-line-3 { width: 58%; }
+    </style>
   </head>
-  <body style="margin:0;background:#f8f4e8;color:#3d3428;">
+  <body style="margin:0;background:var(--gmss-canvas);color:var(--gmss-text);">
     <div id="root"></div>
+    <div id="guanmo-startup-shell" aria-hidden="true">
+      <div class="gmss-title"><span class="gmss-brand">观墨</span></div>
+      <div class="gmss-body">
+        <div class="gmss-rail">
+          <div class="gmss-tool"></div>
+          <div class="gmss-tool"></div>
+          <div class="gmss-tool"></div>
+          <div class="gmss-tool"></div>
+        </div>
+        <div class="gmss-main">
+          <div class="gmss-line gmss-line-heading"></div>
+          <div class="gmss-line gmss-line-1"></div>
+          <div class="gmss-line gmss-line-2"></div>
+          <div class="gmss-line gmss-line-3"></div>
+        </div>
+      </div>
+    </div>
+    <script>performance.mark('guanmo:startup:startup-shell-dom-ready')</script>
+    <script>performance.mark('guanmo:startup:main-module-requested')</script>
     <script type="module" src="/src/main.tsx"></script>
+    <script>performance.mark('guanmo:startup:html-parsed')</script>
   </body>
 </html>

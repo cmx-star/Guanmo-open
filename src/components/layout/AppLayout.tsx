@@ -65,6 +65,7 @@ export function AppLayout() {
   useLayoutEffect(() => {
     markStartupPoint('app-shell-first-visible')
     const frame = requestAnimationFrame(() => {
+      markStartupPoint('first-animation-frame')
       setEditorSurfaceEnabled(true)
     })
     return () => cancelAnimationFrame(frame)

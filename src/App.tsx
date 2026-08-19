@@ -70,6 +70,8 @@ async function restoreTabs(): Promise<void> {
 
   if (openedFromFileAssociation) {
     useEditorStore.getState().resetTabsForExternalOpen()
+    markStartupPoint('active-tab-disk-read-complete', { outcome: 'skipped-external-open' })
+    markStartupPoint('startup-session-restore-complete', { outcome: 'skipped-external-open' })
     return
   }
 
@@ -88,12 +90,21 @@ async function restoreTabs(): Promise<void> {
     state.rightPaneTabId && validIds.has(state.rightPaneTabId) ? state.rightPaneTabId : null,
   )
   const activeIssues: PersistedTabRestoreIssue[] = []
-  const [restoredActiveTab] = activeTab
-    ? await restorePersistedTabs([activeTab], {
-        detectExternalChanges: hasBootSnapshotContent(activeTab),
-        onTabRestoreIssue: (issue) => activeIssues.push(issue),
-      })
-    : []
+  let restoredActiveTabs: Awaited<ReturnType<typeof restorePersistedTabs>>
+  try {
+    restoredActiveTabs = activeTab
+      ? await restorePersistedTabs([activeTab], {
+          detectExternalChanges: hasBootSnapshotContent(activeTab),
+          onTabRestoreIssue: (issue) => activeIssues.push(issue),
+        })
+      : []
+  } catch (error) {
+    // 旁路标记：记录失败 outcome 后原样抛出，不改变异常传播
+    markStartupPoint('active-tab-disk-read-complete', { outcome: 'failed' })
+    markStartupPoint('startup-session-restore-complete', { outcome: 'failed', stage: 'active-restore' })
+    throw error
+  }
+  const [restoredActiveTab] = restoredActiveTabs
   markStartupPoint('active-tab-disk-read-complete', {
     restored: Boolean(restoredActiveTab),
   })
@@ -101,6 +112,10 @@ async function restoreTabs(): Promise<void> {
     useEditorStore.getState().mergeRestoredTab(activeTab, restoredActiveTab)
   }
   showRestoreIssues(activeIssues)
+  markStartupPoint('startup-session-restore-complete', {
+    outcome: activeTab ? (restoredActiveTab ? 'restored' : 'active-missing') : 'no-active-tab',
+    tabs: restorableTabs.length,
+  })
   logDuration('active tab restore', restoreStartedAt)
 
   const backgroundTabs = restorableTabs.filter((tab) => tab.id !== activeTabId)

@@ -56,6 +56,7 @@
         "test:runtime-schemas": "node scripts/run-runtime-schemas-check.mjs",
         "test:file-access": "node scripts/run-file-access-check.mjs",
         "test:session-restore": "node scripts/run-session-restore-check.mjs",
+        "test:cold-start": "node scripts/measure-cold-start.mjs",
         "test:editor-input-performance": "node scripts/run-editor-input-performance-check.mjs",
         "test:editor-languages": "node scripts/run-editor-languages-check.mjs",
         "test:update-version": "node scripts/run-update-version-check.mjs",
