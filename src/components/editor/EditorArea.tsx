@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { EditorView } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
 import { useAppStore } from '@/stores/appStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -1451,7 +1451,7 @@ export function EditorArea() {
     const pos = view.state.doc.line(line).from
     view.dispatch({
       selection: { anchor: pos },
-      scrollIntoView: true,
+      effects: EditorView.scrollIntoView(pos, { y: 'start' }),
     })
     view.focus()
   }, [])
