@@ -82,7 +82,7 @@ describe('Agent 行动安全底座', () => {
     expect(decodePendingAction(JSON.parse(raw))).toMatchObject({
       kind: 'create_reading_reminder',
       effect: 'schedule',
-      payload: { title: '继续阅读', dueAt: '2099-08-11T07:00:00.000Z' },
+      payload: { title: '继续阅读', dueAt: new Date('2099-08-11T15:00:00').toISOString() },
     })
   })
 
