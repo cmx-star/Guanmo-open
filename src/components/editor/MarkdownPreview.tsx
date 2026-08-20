@@ -559,8 +559,29 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       const nextState = { scrollTop: el.scrollTop, viewportHeight: el.clientHeight, viewportWidth: el.clientWidth }
       const currentWidth = scrollStateRef.current.viewportWidth
       if (currentWidth !== 0 && currentWidth !== el.clientWidth) {
+        const estimateForResize = (block: PreviewBlock) => estimatePreviewBlockHeight(block, fontSize, lineHeight)
+        const before = computeVisibleRange(
+          model,
+          el.scrollTop,
+          el.scrollTop + el.clientHeight,
+          measuredHeightsRef.current,
+          estimateForResize,
+          0,
+        )
+        const anchorIndex = before.startIndex
+        const anchorOffset = el.scrollTop - (before.blockTops[anchorIndex] ?? 0)
         remeasureMountedBlocks()
-        flushSync(() => setScrollState(nextState))
+        const after = computeVisibleRange(
+          model,
+          el.scrollTop,
+          el.scrollTop + el.clientHeight,
+          measuredHeightsRef.current,
+          estimateForResize,
+          0,
+        )
+        const anchoredScrollTop = Math.max(0, (after.blockTops[anchorIndex] ?? 0) + anchorOffset)
+        el.scrollTop = anchoredScrollTop
+        flushSync(() => setScrollState({ ...nextState, scrollTop: anchoredScrollTop }))
         return
       }
       setScrollState(nextState)
@@ -568,6 +589,10 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     update()
     const ro = new ResizeObserver(update)
     const blockRo = new ResizeObserver((entries) => {
+      if (scrollStateRef.current.viewportWidth !== 0 && scrollStateRef.current.viewportWidth !== el.clientWidth) {
+        update()
+        return
+      }
       const estimateForObserver = (block: PreviewBlock) => estimatePreviewBlockHeight(block, fontSize, lineHeight)
       const before = computeVisibleRange(
         model,
