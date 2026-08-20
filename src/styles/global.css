@@ -828,6 +828,21 @@ body {
   color: var(--gm-text);
 }
 
+/* === Preview unified Range highlights (CSS Highlight API) ===
+ * 虚拟化预览的选区与搜索高亮：DOM Range 注册在 Highlight Registry，
+ * 状态存活于文档模型，块卸载/重挂载时高亮自动恢复。 */
+::highlight(preview-selection) {
+  background: var(--gm-editor-selection);
+}
+
+::highlight(search-highlight) {
+  background: rgba(250, 204, 21, 0.4);
+}
+
+::highlight(search-highlight-active) {
+  background: rgba(249, 115, 22, 0.55);
+}
+
 /* === Focus Ring === */
 :focus-visible {
   outline: 2px solid var(--gm-border-focus);

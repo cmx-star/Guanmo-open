@@ -60,7 +60,10 @@ interface SearchOverlayProps {
   previewSources?: Array<{
     content: string
     paneRef: React.RefObject<HTMLDivElement | null>
-    previewRef: React.RefObject<{ scrollToOffset: (offset: number) => void } | null>
+    previewRef: React.RefObject<{
+      scrollToOffset: (offset: number) => void
+      setSearchState?: (state: { query: string; activeOffset?: number } | null) => void
+    } | null>
   }>
 }
 
@@ -106,17 +109,19 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
 
   // Clear on unmount
   useEffect(() => {
+    const sources = previewSources
     return () => {
       const view = editorViewRef?.current
       if (view && view.state.field(searchField, false)) {
         view.dispatch({ effects: clearSearch.of(null) })
       }
-      if (typeof CSS !== 'undefined' && CSS.highlights) {
-        CSS.highlights.delete('search-highlight')
-        CSS.highlights.delete('search-highlight-active')
+      // 搜索关闭：清除各预览实例的模型驱动高亮（虚拟块卸载/挂载不再残留）
+      for (const source of sources) {
+        source.previewRef.current?.setSearchState?.(null)
       }
     }
-  }, [editorViewRef])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // --- Editor search ---
   const doEditorSearch = useCallback((searchQuery: string) => {
@@ -177,44 +182,23 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
     })
   }, [editorViewRef, query])
 
-  // --- Preview search (CSS Highlight API) ---
-  const highlightMountedPreviewMatches = useCallback((searchQuery: string) => {
-    if (typeof CSS === 'undefined' || !CSS.highlights) return
-    CSS.highlights.delete('search-highlight')
-    CSS.highlights.delete('search-highlight-active')
-    if (!searchQuery) return
-
-    const allRanges: globalThis.Range[] = []
-    for (const { paneRef } of previewSources) {
-      const el = paneRef.current
-      if (!el) continue
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-      let node: Text | null
-      while ((node = walker.nextNode() as Text)) {
-        const text = node.textContent || ''
-        const regex = new RegExp(escapeRegex(searchQuery), 'gi')
-        let match: RegExpExecArray | null
-        while ((match = regex.exec(text)) !== null) {
-          const range = document.createRange()
-          range.setStart(node, match.index)
-          range.setEnd(node, match.index + match[0].length)
-          allRanges.push(range)
-        }
-      }
-    }
-
-    if (allRanges.length > 0) {
-      CSS.highlights.set('search-highlight', new Highlight(...allRanges))
-      CSS.highlights.set('search-highlight-active', new Highlight(allRanges[0]))
-    }
+  // --- Preview search (model-driven highlights via setSearchState) ---
+  /** 同步搜索状态到各预览实例：active 匹配仅在目标 pane，其余 pane 仅保留普通高亮 */
+  const syncPreviewSearchState = useCallback((searchQuery: string, activeSourceIndex: number, activeOffset?: number) => {
+    previewSources.forEach((source, index) => {
+      const state = searchQuery
+        ? (index === activeSourceIndex && activeOffset !== undefined
+          ? { query: searchQuery, activeOffset }
+          : { query: searchQuery })
+        : null
+      source.previewRef.current?.setSearchState?.(state)
+    })
   }, [previewSources])
 
   const revealPreviewMatch = useCallback((match: PreviewMatch, searchQuery: string) => {
+    syncPreviewSearchState(searchQuery, match.sourceIndex, match.from)
     previewSources[match.sourceIndex]?.previewRef.current?.scrollToOffset(match.from)
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => highlightMountedPreviewMatches(searchQuery))
-    })
-  }, [highlightMountedPreviewMatches, previewSources])
+  }, [previewSources, syncPreviewSearchState])
 
   const searchPreview = useCallback((searchQuery: string) => {
     const matches = previewSources.flatMap((source, sourceIndex) => (
@@ -225,14 +209,12 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
     setCurrentMatch(0)
     setMatchCount(matches.length)
     if (!searchQuery) {
-      if (typeof CSS !== 'undefined' && CSS.highlights) {
-        CSS.highlights.delete('search-highlight')
-        CSS.highlights.delete('search-highlight-active')
-      }
+      syncPreviewSearchState('', -1)
       return
     }
     if (matches[0]) revealPreviewMatch(matches[0], searchQuery)
-  }, [previewSources, revealPreviewMatch])
+    else syncPreviewSearchState(searchQuery, -1)
+  }, [previewSources, revealPreviewMatch, syncPreviewSearchState])
 
   const navigatePreview = useCallback((direction: 1 | -1) => {
     if (!query) return

@@ -48,6 +48,9 @@ interface PreviewMenuState {
   startLine?: number
   endLine?: number
   pane: 'left' | 'right'
+  /** 统一 Range 快照的精确源码 offset（接管选区时存在） */
+  selectionFrom?: number
+  selectionTo?: number
 }
 
 interface PreviewSelectionSource {
@@ -1618,27 +1621,33 @@ export function EditorArea() {
     pane: 'left' | 'right'
   ) => {
     e.preventDefault()
-    const container = pane === 'left' ? leftPreviewRef.current : rightPreviewRef.current
-    const selection = window.getSelection()
-    const selectedText = container && selection && selection.rangeCount > 0
-      && container.contains(selection.anchorNode) && container.contains(selection.focusNode)
-      ? selection.toString()
-      : ''
+    // 优先读取统一 Range 选区快照（虚拟化下 DOM 卸载不丢失）
+    const previewHandle = pane === 'left' ? leftMarkdownPreviewRef.current : rightMarkdownPreviewRef.current
+    const snapshot = previewHandle?.getSelection() ?? null
+    let selectedText = snapshot?.text ?? ''
+    let startLine = snapshot?.startLine
+    let endLine = snapshot?.endLine
+    const selectionFrom = snapshot?.from
+    const selectionTo = snapshot?.to
 
-    // 获取行号范围
-    let startLine: number | undefined
-    let endLine: number | undefined
-    if (selectedText && selection && container) {
-      const lineRange = getPreviewSelectionLineRange(selection, container)
-      startLine = lineRange.startLine
-      endLine = lineRange.endLine
+    // 非接管区域（KaTeX / 代码高亮等）回退原生 DOM Selection
+    if (!selectedText) {
+      const container = pane === 'left' ? leftPreviewRef.current : rightPreviewRef.current
+      const selection = window.getSelection()
+      if (container && selection && selection.rangeCount > 0
+        && container.contains(selection.anchorNode) && container.contains(selection.focusNode)) {
+        selectedText = selection.toString()
+        const lineRange = getPreviewSelectionLineRange(selection, container)
+        startLine = lineRange.startLine
+        endLine = lineRange.endLine
+      }
+      clearPreviewContextHighlight()
+      if (selectedText && typeof CSS !== 'undefined' && CSS.highlights && selection && selection.rangeCount > 0) {
+        CSS.highlights.set(PREVIEW_CONTEXT_HIGHLIGHT, new Highlight(selection.getRangeAt(0).cloneRange()))
+      }
     }
 
-    clearPreviewContextHighlight()
-    if (selectedText && selection && typeof CSS !== 'undefined' && CSS.highlights) {
-      CSS.highlights.set(PREVIEW_CONTEXT_HIGHLIGHT, new Highlight(selection.getRangeAt(0).cloneRange()))
-    }
-    setPreviewMenu({ x: e.clientX, y: e.clientY, selectedText, startLine, endLine, pane })
+    setPreviewMenu({ x: e.clientX, y: e.clientY, selectedText, startLine, endLine, selectionFrom, selectionTo, pane })
   }, [clearPreviewContextHighlight, getPreviewSelectionLineRange])
 
   const handleCopyPreviewSelection = useCallback(() => {
@@ -1650,13 +1659,9 @@ export function EditorArea() {
   }, [clearPreviewContextHighlight, previewMenu])
 
   const handleSelectAllPreview = useCallback(() => {
-    const container = previewMenu?.pane === 'right' ? rightPreviewRef.current : leftPreviewRef.current
-    if (!container) return
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(container)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
+    // 逻辑全文选择：selectionRange = 文档开始 → 文档结束，不依赖 DOM Selection
+    const previewHandle = previewMenu?.pane === 'right' ? rightMarkdownPreviewRef.current : leftMarkdownPreviewRef.current
+    previewHandle?.selectAll()
     clearPreviewContextHighlight()
     setPreviewMenu(null)
   }, [clearPreviewContextHighlight, previewMenu])
@@ -1671,6 +1676,24 @@ export function EditorArea() {
     if (!selectedText) return null
 
     const content = tab.content
+
+    // 统一 Range 快照：offset 即精确源码位置，无需文本回溯推测
+    if (
+      typeof previewMenu.selectionFrom === 'number'
+      && typeof previewMenu.selectionTo === 'number'
+      && previewMenu.selectionTo > previewMenu.selectionFrom
+      && previewMenu.selectionTo <= content.length
+    ) {
+      return {
+        title: tab.title,
+        filePath: tab.filePath,
+        text: content.slice(previewMenu.selectionFrom, previewMenu.selectionTo),
+        startLine: previewMenu.startLine,
+        endLine: previewMenu.endLine,
+        selectionFrom: previewMenu.selectionFrom,
+        selectionTo: previewMenu.selectionTo,
+      }
+    }
     const normalizedSelectedText = selectedText.replace(/\r\n/g, '\n')
     const lines = content.split('\n')
     const startLine = previewMenu.startLine

@@ -31,6 +31,20 @@ export type PreviewBlockType =
   | 'footnoteDefinition'
   | 'unknown'
 
+/**
+ * 块内"渲染可见文本 ↔ 源码 offset"的最小映射单元。
+ * from/to 为全文源码 offset；text 为该 text 节点渲染后的可见文本
+ * （不含 Markdown 标记，如 `**bold**` 的 segment text 为 `bold`，
+ * 但 from/to 精确指向源码中 bold 的位置）。
+ * inlineCode / code 等的 value 不含定界符，from/to 覆盖含定界符的源码区间，
+ * text 内偏移与 from 起点的差值在定界符之前保持一致。
+ */
+export interface PreviewTextSegment {
+  from: number
+  to: number
+  text: string
+}
+
 export interface PreviewBlock {
   /** 稳定、不可变的块 ID，基于块在全文的索引 + 类型签名；可用于 React key 与缓存键 */
   blockId: string
@@ -45,6 +59,12 @@ export interface PreviewBlock {
   normalizedEndOffset: number
   /** 原始 Markdown 切片；用于预览内编辑与冲突检测 */
   rawSource: string
+  /**
+   * 块内 text 节点的源码 offset ↔ 渲染文本映射，按文档顺序排列。
+   * 供统一 DocumentRange 的 getText 与 DOM span 标注共用同一数据源。
+   * math/html 等渲染后不含对应纯文本的节点不产生 segment（选区精度降级到块级）。
+   */
+  textSegments: PreviewTextSegment[]
   /**
    * 当块为 heading 时填充，用于目录跳转与 heading ID 去重；
    * 其他块保持 undefined，避免额外开销。
@@ -143,6 +163,7 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
       normalizedStartOffset: 0,
       normalizedEndOffset: frontmatter.endOffset,
       rawSource: rawContent.slice(0, frontmatter.endOffset),
+      textSegments: [],
     })
   }
 
@@ -203,6 +224,7 @@ export function createMarkdownPreviewModel(rawContent: string): MarkdownPreviewM
       normalizedStartOffset: startOffset,
       normalizedEndOffset: endOffset,
       rawSource,
+      textSegments: collectTextSegments(node),
     }
 
     if (type === 'heading') {
@@ -372,6 +394,37 @@ export function getEstimatedPreviewTopForLine(
 }
 
 /* ----------------------------- 内部辅助 ----------------------------- */
+
+/**
+ * 收集块内 mdast text 节点的 {源码 offset, 渲染文本} 序列。
+ * 只收集 text / inlineCode / code（渲染后保留纯文本的节点）；
+ * hard break 记为单个换行。math / inlineMath / html 等渲染后
+ * 不含对应纯文本的节点跳过（DocumentRange 精度降级到块级）。
+ */
+function collectTextSegments(node: MdastPositioned): PreviewTextSegment[] {
+  const out: PreviewTextSegment[] = []
+  const walk = (current: MdastPositioned) => {
+    if (current.type === 'break') {
+      const from = current.position?.start?.offset
+      const to = current.position?.end?.offset
+      if (typeof from === 'number' && typeof to === 'number') {
+        out.push({ from, to, text: '\n' })
+      }
+      return
+    }
+    if (current.type === 'text' || current.type === 'inlineCode' || current.type === 'code') {
+      const from = current.position?.start?.offset
+      const to = current.position?.end?.offset
+      if (typeof from === 'number' && typeof to === 'number' && typeof current.value === 'string' && current.value) {
+        out.push({ from, to, text: current.value })
+      }
+      return
+    }
+    for (const child of current.children ?? []) walk(child)
+  }
+  walk(node)
+  return out
+}
 
 function makeBlockId(type: string, index: number, seed: string): string {
   let hash = 2166136261

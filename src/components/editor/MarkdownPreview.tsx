@@ -12,6 +12,16 @@ import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewTopForLine, type PreviewBlock } from '@/services/markdownPreviewModel'
+import {
+  buildDocumentRangeInfo,
+  buildDomRangesForSourceRange,
+  createSourceOffsetAnnotator,
+  domPointToSourceOffset,
+  findWordRangeAt,
+  getTextForSourceRange,
+  previewHighlightRegistry,
+  type DocumentRange,
+} from '@/services/previewHighlight'
 import { eventMarker } from '@/services/eventMarker'
 import { InlineMarkdownBlockEditor } from './InlineMarkdownBlockEditor'
 
@@ -63,10 +73,31 @@ export type MarkdownBlockCommitResult =
   | { status: 'applied'; content?: string }
   | { status: 'conflict'; currentSource: string }
 
+/** 预览全文搜索状态：SearchOverlay 通过模型驱动各实例的高亮与 active 项 */
+export interface PreviewSearchState {
+  query: string
+  /** 当前 active 匹配的全局源码 offset（起点） */
+  activeOffset?: number
+}
+
+/** 统一 Range 选区快照：供右键菜单、复制、AI 上下文等消费 */
+export interface PreviewSelectionSnapshot {
+  range: DocumentRange
+  from: number
+  to: number
+  text: string
+  startLine: number
+  endLine: number
+}
+
 export interface MarkdownPreviewHandle {
   scrollToLine: (line: number) => void
   scrollToOffset: (offset: number) => void
   getTopForLine: (line: number) => number | undefined
+  setSearchState: (state: PreviewSearchState | null) => void
+  getSelection: () => PreviewSelectionSnapshot | null
+  selectAll: () => void
+  clearSelection: () => void
 }
 
 interface MarkdownPreviewProps {
@@ -111,6 +142,32 @@ interface OptimisticPreviewContent {
 }
 
 const ALT_CLICK_MOVE_THRESHOLD = 6
+
+/** 最近一次鼠标按下的预览实例（Ctrl+A / Ctrl+C 仅作用于该实例） */
+let activePreviewRoot: HTMLElement | null = null
+const DRAG_AUTOSCROLL_EDGE = 48
+const DRAG_AUTOSCROLL_MAX_STEP = 14
+
+interface PreviewDragSelection {
+  anchorOffset: number
+  focusOffset: number
+  rafId: number
+  clientX: number
+  clientY: number
+}
+
+function countLineBreaks(text: string): number {
+  let n = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i)
+    if (c === 10) n += 1
+    else if (c === 13) {
+      n += 1
+      if (text.charCodeAt(i + 1) === 10) i += 1
+    }
+  }
+  return n
+}
 
 interface StableMarkdownContentProps {
   markdown: string
@@ -161,11 +218,17 @@ const StableMarkdownBlock = memo(function StableMarkdownBlock({
   globalIndex,
   top,
   onElement,
+  rehypePlugins,
   ...contentProps
 }: StableMarkdownBlockProps) {
   const setElement = useCallback((element: HTMLDivElement | null) => {
     onElement(globalIndex, element)
   }, [globalIndex, onElement])
+  // 按块注入源码 offset 标注：DOM ↔ 文档模型映射的数据来源
+  const blockRehypePlugins = useMemo(
+    () => [...(rehypePlugins ?? []), createSourceOffsetAnnotator(block.startOffset)],
+    [rehypePlugins, block.startOffset],
+  )
 
   return (
     <div
@@ -177,7 +240,7 @@ const StableMarkdownBlock = memo(function StableMarkdownBlock({
       data-md-end-line={block.endLine}
       style={{ position: 'absolute', top, width: '100%' }}
     >
-      <StableMarkdownContent {...contentProps} />
+      <StableMarkdownContent {...contentProps} rehypePlugins={blockRehypePlugins} />
     </div>
   )
 })
@@ -270,6 +333,17 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   scrollStateRef.current = scrollState
 
+  // ---- 统一 Range 基础设施：搜索 / 选区状态全部 ref 驱动，不触发 React 重渲染 ----
+  const modelRef = useRef(model)
+  modelRef.current = model
+  const searchStateRef = useRef<PreviewSearchState | null>(null)
+  /** 搜索结果按 blockId 建立的索引（查询 O(1)，避免块渲染时扫描全部匹配） */
+  const searchMatchesByBlockRef = useRef<Map<string, Array<{ from: number; to: number }>> | null>(null)
+  /** 归一化选区（from < to，全文源码 offset）；DOM 卸载不影响其存活 */
+  const selectionRangeRef = useRef<{ from: number; to: number } | null>(null)
+  const selectionAnchorRef = useRef<number | null>(null)
+  const dragStateRef = useRef<PreviewDragSelection | null>(null)
+
   const measurementKey = measurementKeyRef.current
   if (
     !measurementKey
@@ -310,10 +384,13 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   useEffect(() => {
     const lifecycleMetadata = lifecycleMetadataRef.current
+    const root = rootRef.current
     mountedRef.current = true
     eventMarker.mark('model-create', lifecycleMetadata)
     return () => {
       eventMarker.mark('model-dispose', lifecycleMetadata)
+      previewHighlightRegistry.clearResource(lifecycleMetadata.resource)
+      if (activePreviewRoot === root) activePreviewRoot = null
       const edit = activeEditRef.current
       const commit = onBlockCommitRef.current
       if (edit && commit && !submitPromiseRef.current) {
@@ -327,6 +404,116 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       mountedRef.current = false
     }
   }, [])
+
+  /* ---------------- 统一 Range：块级高亮同步（挂载/卸载时自动恢复） ---------------- */
+
+  const syncBlockHighlights = useCallback((
+    index: number,
+    element: HTMLElement,
+    kinds: { search?: boolean; selection?: boolean } = {},
+  ) => {
+    const block = modelRef.current.blocks[index]
+    if (!block) return
+    const next: { search?: globalThis.Range[]; searchActive?: globalThis.Range[]; selection?: globalThis.Range[] } = {}
+    if (kinds.search !== false) {
+      const searchState = searchStateRef.current
+      const matches = searchState ? searchMatchesByBlockRef.current?.get(block.blockId) : undefined
+      const searchRanges: globalThis.Range[] = []
+      let activeRanges: globalThis.Range[] = []
+      if (matches && matches.length > 0) {
+        const activeOffset = searchState?.activeOffset
+        for (const match of matches) {
+          const ranges = buildDomRangesForSourceRange(element, match.from, match.to)
+          if (activeOffset !== undefined && match.from <= activeOffset && activeOffset < match.to) {
+            activeRanges = ranges
+          } else {
+            searchRanges.push(...ranges)
+          }
+        }
+      }
+      next.search = searchRanges
+      next.searchActive = activeRanges
+    }
+    if (kinds.selection !== false) {
+      const selection = selectionRangeRef.current
+      const from = Math.max(selection?.from ?? 0, block.startOffset)
+      const to = Math.min(selection?.to ?? 0, block.endOffset)
+      next.selection = selection && to > from
+        ? buildDomRangesForSourceRange(element, from, to)
+        : []
+    }
+    previewHighlightRegistry.syncBlock(resource, block.blockId, next)
+  }, [resource])
+
+  const syncAllMountedBlocks = useCallback((kinds: { search?: boolean; selection?: boolean }) => {
+    if (requiresWholeDocumentRender) {
+      // 整篇渲染模式无虚拟块 ref 追踪，直接按 DOM 标记同步
+      const root = rootRef.current
+      if (!root) return
+      for (const element of root.querySelectorAll<HTMLElement>('[data-md-block-index]')) {
+        const index = Number(element.dataset.mdBlockIndex)
+        if (Number.isInteger(index)) syncBlockHighlights(index, element, kinds)
+      }
+      return
+    }
+    for (const [index, element] of blockRefs.current) {
+      if (element) syncBlockHighlights(index, element, kinds)
+    }
+  }, [syncBlockHighlights, requiresWholeDocumentRender])
+
+  const applySelection = useCallback((range: { from: number; to: number } | null) => {
+    const prev = selectionRangeRef.current
+    if (range === null || range.from === range.to) {
+      if (prev === null) return
+      selectionRangeRef.current = null
+    } else {
+      const normalized = range.from <= range.to ? range : { from: range.to, to: range.from }
+      if (prev && prev.from === normalized.from && prev.to === normalized.to) return
+      selectionRangeRef.current = normalized
+    }
+    // 只同步选区高亮：ref 驱动 + 块级增量，不触发任何 React 重渲染
+    syncAllMountedBlocks({ search: false, selection: true })
+  }, [syncAllMountedBlocks])
+
+  /** SearchOverlay 入口：全文搜索一次并按 blockId 建立匹配索引（O(1) 查询） */
+  const setSearchStateImpl = useCallback((state: PreviewSearchState | null) => {
+    searchStateRef.current = state && state.query ? state : null
+    const query = searchStateRef.current?.query
+    const map = new Map<string, Array<{ from: number; to: number }>>()
+    if (query) {
+      const currentModel = modelRef.current
+      const lower = query.toLowerCase()
+      const src = currentModel.rawContent
+      let from = 0
+      for (;;) {
+        const idx = src.toLowerCase().indexOf(lower, from)
+        if (idx < 0) break
+        const to = idx + query.length
+        const blockIndex = findBlockIndexByOffset(currentModel, idx)
+        if (blockIndex >= 0) {
+          const block = currentModel.blocks[blockIndex]
+          const list = map.get(block.blockId)
+          if (list) list.push({ from: idx, to })
+          else map.set(block.blockId, [{ from: idx, to }])
+        }
+        from = idx + Math.max(1, query.length)
+      }
+    }
+    searchMatchesByBlockRef.current = query ? map : null
+    syncAllMountedBlocks({ search: true, selection: false })
+  }, [syncAllMountedBlocks])
+
+  // 文档内容变化：旧 offset 全部失效，清除搜索索引与选区状态
+  useEffect(() => {
+    searchMatchesByBlockRef.current = null
+    const hadSearch = searchStateRef.current !== null
+    const hadSelection = selectionRangeRef.current !== null
+    searchStateRef.current = null
+    selectionRangeRef.current = null
+    selectionAnchorRef.current = null
+    if (hadSearch) syncAllMountedBlocks({ search: true, selection: false })
+    if (hadSelection) syncAllMountedBlocks({ search: false, selection: true })
+  }, [displayedContent, syncAllMountedBlocks])
 
   useEffect(() => {
     if (!optimisticContent) return
@@ -425,14 +612,21 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   const setBlockElement = useCallback((index: number, element: HTMLDivElement | null) => {
     const previous = blockRefs.current.get(index)
-    if (previous && previous !== element) blockResizeObserverRef.current?.unobserve(previous)
+    if (previous && previous !== element) {
+      blockResizeObserverRef.current?.unobserve(previous)
+      // 虚拟块卸载：仅移除该块的 DOM Range，文档级搜索/选区状态保留
+      const previousKey = previous.dataset.mdBlockKey
+      if (previousKey) previewHighlightRegistry.removeBlock(resource, previousKey)
+    }
     if (element) {
       blockRefs.current.set(index, element)
       blockResizeObserverRef.current?.observe(element)
+      // 块（重新）挂载：根据当前搜索/选区状态自动恢复高亮
+      syncBlockHighlights(index, element)
     } else {
       blockRefs.current.delete(index)
     }
-  }, [])
+  }, [resource, syncBlockHighlights])
 
   // Height estimation
   const estimateBlockHeight = useCallback(
@@ -474,7 +668,35 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       const top = getEstimatedPreviewTopForLine(model, line, estimateBlockHeight, measuredHeightsRef.current)
       if (typeof top === 'number') container.scrollTo({ top: Math.max(0, top - 24) })
     },
-  }), [model, estimateBlockHeight])
+    setSearchState: setSearchStateImpl,
+    getSelection() {
+      const selection = selectionRangeRef.current
+      if (!selection) return null
+      const currentModel = modelRef.current
+      const info = buildDocumentRangeInfo(currentModel, selection.from, selection.to)
+      if (!info) return null
+      return {
+        range: info.range,
+        from: selection.from,
+        to: selection.to,
+        text: getTextForSourceRange(currentModel, selection.from, selection.to),
+        startLine: 1 + countLineBreaks(currentModel.rawContent.slice(0, selection.from)),
+        endLine: 1 + countLineBreaks(currentModel.rawContent.slice(0, selection.to)),
+      }
+    },
+    selectAll() {
+      const currentModel = modelRef.current
+      if (currentModel.blocks.length === 0) return
+      const from = currentModel.blocks[0].startOffset
+      const to = currentModel.blocks[currentModel.blocks.length - 1].endOffset
+      selectionAnchorRef.current = from
+      applySelection({ from, to })
+    },
+    clearSelection() {
+      selectionAnchorRef.current = null
+      applySelection(null)
+    },
+  }), [model, estimateBlockHeight, setSearchStateImpl, applySelection])
 
   // Visible range
   const visible = useMemo(
@@ -728,6 +950,158 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     event.stopPropagation()
   }, [])
 
+  /* ---------------- 统一 Range：拖选引擎 + 键盘（Ctrl+A/C、双击选词、Shift+点击） ---------------- */
+
+  const resolveCaretOffsetRef = useRef<(clientX: number, clientY: number) => number | null>(() => null)
+  resolveCaretOffsetRef.current = (clientX: number, clientY: number) => {
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+    }
+    let node: Node | null = null
+    let offset = 0
+    if (typeof doc.caretRangeFromPoint === 'function') {
+      const hit = doc.caretRangeFromPoint(clientX, clientY)
+      if (hit) {
+        node = hit.startContainer
+        offset = hit.startOffset
+      }
+    } else if (typeof doc.caretPositionFromPoint === 'function') {
+      const hit = doc.caretPositionFromPoint(clientX, clientY)
+      if (hit) {
+        node = hit.offsetNode
+        offset = hit.offset
+      }
+    }
+    if (!node || !rootRef.current?.contains(node)) return null
+    return domPointToSourceOffset(node, offset)
+  }
+
+  const runDragFrameRef = useRef<() => void>(() => {})
+  runDragFrameRef.current = () => {
+    const drag = dragStateRef.current
+    if (!drag) return
+    drag.rafId = 0
+    // 边缘自动滚动：长距离拖选跨屏（滚动驱动虚拟化挂载新块，选区自动延伸）
+    const container = scrollContainerRef.current
+    if (container) {
+      const rect = container.getBoundingClientRect()
+      let dy = 0
+      if (drag.clientY < rect.top + DRAG_AUTOSCROLL_EDGE) {
+        dy = -Math.ceil(Math.min(DRAG_AUTOSCROLL_MAX_STEP, (rect.top + DRAG_AUTOSCROLL_EDGE - drag.clientY) / 3))
+      } else if (drag.clientY > rect.bottom - DRAG_AUTOSCROLL_EDGE) {
+        dy = Math.ceil(Math.min(DRAG_AUTOSCROLL_MAX_STEP, (drag.clientY - rect.bottom + DRAG_AUTOSCROLL_EDGE) / 3))
+      }
+      if (dy !== 0) container.scrollTop += dy
+    }
+    // 每帧最多更新一次终点，且只有 offset 真正变化时才写入选区
+    const offset = resolveCaretOffsetRef.current(drag.clientX, drag.clientY)
+    if (offset !== null && offset !== drag.focusOffset) {
+      drag.focusOffset = offset
+      applySelection({ from: drag.anchorOffset, to: offset })
+    }
+    drag.rafId = requestAnimationFrame(runDragFrameRef.current)
+  }
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0 || event.altKey) return
+      activePreviewRoot = root
+      const offset = resolveCaretOffsetRef.current(event.clientX, event.clientY)
+      if (offset === null) return
+      // 命中标注文本：接管选区（阻止原生 DOM Selection 启动）
+      event.preventDefault()
+      const current = selectionRangeRef.current
+      const anchor = event.shiftKey && current
+        ? (selectionAnchorRef.current ?? current.from)
+        : offset
+      dragStateRef.current = {
+        anchorOffset: anchor,
+        focusOffset: offset,
+        rafId: requestAnimationFrame(runDragFrameRef.current),
+        clientX: event.clientX,
+        clientY: event.clientY,
+      }
+      applySelection(anchor === offset ? null : { from: anchor, to: offset })
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const drag = dragStateRef.current
+      if (!drag || (event.buttons & 1) === 0) return
+      drag.clientX = event.clientX
+      drag.clientY = event.clientY
+    }
+
+    const handleMouseUp = (event: MouseEvent) => {
+      const drag = dragStateRef.current
+      if (!drag) return
+      dragStateRef.current = null
+      if (drag.rafId !== 0) cancelAnimationFrame(drag.rafId)
+      const offset = resolveCaretOffsetRef.current(event.clientX, event.clientY)
+      const focus = offset ?? drag.focusOffset
+      selectionAnchorRef.current = drag.anchorOffset
+      applySelection(drag.anchorOffset === focus ? null : { from: drag.anchorOffset, to: focus })
+    }
+
+    const handleDoubleClick = (event: MouseEvent) => {
+      const offset = resolveCaretOffsetRef.current(event.clientX, event.clientY)
+      if (offset === null) return
+      const word = findWordRangeAt(modelRef.current, offset)
+      if (word) {
+        selectionAnchorRef.current = word.from
+        applySelection(word)
+      }
+    }
+
+    root.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousemove', handleMouseMove, true)
+    document.addEventListener('mouseup', handleMouseUp, true)
+    root.addEventListener('dblclick', handleDoubleClick)
+    return () => {
+      root.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('mousemove', handleMouseMove, true)
+      document.removeEventListener('mouseup', handleMouseUp, true)
+      root.removeEventListener('dblclick', handleDoubleClick)
+      const drag = dragStateRef.current
+      if (drag && drag.rafId !== 0) cancelAnimationFrame(drag.rafId)
+      dragStateRef.current = null
+    }
+  }, [applySelection])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (activePreviewRoot !== rootRef.current) return
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .cm-editor, .gm-inline-markdown-editor')) return
+      if (!(event.ctrlKey || event.metaKey)) {
+        if (event.key === 'Escape' && selectionRangeRef.current) applySelection(null)
+        return
+      }
+      const key = event.key.toLowerCase()
+      if (key === 'a') {
+        // 逻辑全文选择：selectionRange = 文档开始 → 文档结束，不依赖 DOM
+        event.preventDefault()
+        const currentModel = modelRef.current
+        if (currentModel.blocks.length === 0) return
+        const from = currentModel.blocks[0].startOffset
+        const to = currentModel.blocks[currentModel.blocks.length - 1].endOffset
+        selectionAnchorRef.current = from
+        applySelection({ from, to })
+      } else if (key === 'c') {
+        const selection = selectionRangeRef.current
+        if (!selection) return
+        // 复制统一走 selectionRange → 文档模型 → 剪贴板，虚拟化下可复制任意超长选区
+        event.preventDefault()
+        void navigator.clipboard.writeText(getTextForSourceRange(modelRef.current, selection.from, selection.to))
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [applySelection])
+
   const rehypePlugins = useMemo(
     () => [
       ...(!skipHtml && hasEmbeddedHtml && htmlRehypePlugins ? htmlRehypePlugins : []),
@@ -736,7 +1110,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     [hasEmbeddedHtml, htmlRehypePlugins, skipHtml],
   )
   const wholeDocumentRehypePlugins = useMemo(
-    () => [...rehypePlugins, createMarkdownBlockWrapperPlugin(model.blocks)],
+    () => [...rehypePlugins, createSourceOffsetAnnotator(0), createMarkdownBlockWrapperPlugin(model.blocks)],
     [model.blocks, rehypePlugins],
   )
 
