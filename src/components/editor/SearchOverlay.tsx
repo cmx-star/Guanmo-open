@@ -52,6 +52,25 @@ function findMatches(doc: string, query: string, caseSensitive: boolean): { from
   return matches
 }
 
+/**
+ * 在匹配列表中选取离锚点（当前光标/视口 offset）最近的匹配下标。
+ * - 无锚点或空列表 → 0（保持现状：跳文档首个匹配）。
+ * - 距离相等时取 `from >= anchor` 的后者（搜索方向优先）。
+ */
+export function findNearestMatchIndex(matches: { from: number; to: number }[], anchor: number | undefined): number {
+  if (matches.length === 0 || anchor === undefined) return 0
+  let best = 0
+  let bestDist = Number.POSITIVE_INFINITY
+  for (let i = 0; i < matches.length; i += 1) {
+    const dist = Math.abs(matches[i].from - anchor)
+    if (dist < bestDist || (dist === bestDist && matches[i].from >= anchor)) {
+      best = i
+      bestDist = dist
+    }
+  }
+  return best
+}
+
 // --- Component ---
 
 interface SearchOverlayProps {
@@ -65,6 +84,8 @@ interface SearchOverlayProps {
       setSearchState?: (state: { query: string; activeOffset?: number } | null) => void
       /** 可见文本投影搜索（与预览高亮同一语义）；未提供时回退原文扫描 */
       searchVisible?: (query: string) => Array<{ from: number; to: number }>
+      /** 当前视口顶部对应的源码 offset；未提供时锚点兜底为文档首个匹配 */
+      getViewportOffset?: () => number | undefined
     } | null>
   }>
 }
@@ -138,15 +159,17 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
     const doc = view.state.doc.toString()
     const matches = findMatches(doc, searchQuery, false)
     matchesRef.current = matches
-    currentMatchRef.current = 0
-    setCurrentMatch(0)
+    // 锚点取当前光标：优先跳离光标最近的匹配，而不是文档首个匹配
+    const nearest = findNearestMatchIndex(matches, view.state.selection.main.head)
+    currentMatchRef.current = nearest
+    setCurrentMatch(matches.length > 0 ? nearest : 0)
     setMatchCount(matches.length)
 
     if (matches.length > 0) {
-      // Move cursor to first match
+      // Move cursor to nearest match
       view.dispatch({
-        selection: { anchor: matches[0].from, head: matches[0].to },
-        effects: setSearchQuery.of({ query: searchQuery, caseSensitive: false, currentMatch: 0, matches }),
+        selection: { anchor: matches[nearest].from, head: matches[nearest].to },
+        effects: setSearchQuery.of({ query: searchQuery, caseSensitive: false, currentMatch: nearest, matches }),
         scrollIntoView: true,
       })
     } else {
@@ -211,14 +234,23 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
       return findMatches(source.content, searchQuery, false).map((match) => ({ ...match, sourceIndex }))
     })
     previewMatchesRef.current = matches
-    currentMatchRef.current = 0
-    setCurrentMatch(0)
+    // 锚点取活跃 pane 的视口顶部：优先 document.activeElement 所在 pane，否则第一个 source
+    let anchorSourceIndex = 0
+    const activeEl = document.activeElement
+    if (activeEl) {
+      const focusedIndex = previewSources.findIndex((source) => source.paneRef.current?.contains(activeEl))
+      if (focusedIndex >= 0) anchorSourceIndex = focusedIndex
+    }
+    const anchor = previewSources[anchorSourceIndex]?.previewRef.current?.getViewportOffset?.()
+    const nearest = findNearestMatchIndex(matches, anchor)
+    currentMatchRef.current = nearest
+    setCurrentMatch(matches.length > 0 ? nearest : 0)
     setMatchCount(matches.length)
     if (!searchQuery) {
       syncPreviewSearchState('', -1)
       return
     }
-    if (matches[0]) revealPreviewMatch(matches[0], searchQuery)
+    if (matches[nearest]) revealPreviewMatch(matches[nearest], searchQuery)
     else syncPreviewSearchState(searchQuery, -1)
   }, [previewSources, revealPreviewMatch, syncPreviewSearchState])
 

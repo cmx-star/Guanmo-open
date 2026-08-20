@@ -337,6 +337,37 @@ export function findBlockIndexByLine(model: MarkdownPreviewModel, line: number):
   return -1
 }
 
+/**
+ * 根据源码行号（1-based）反推该行首字符的源码 offset；未命中返回 undefined。
+ * 与 getEstimatedPreviewLineForTop 互逆，供搜索锚点把“视口顶部行”映射回源码 offset。
+ * 行号落在块间空行时无法定位，返回 undefined（调用方按现状兜底）。
+ */
+export function getSourceOffsetForLine(model: MarkdownPreviewModel, line: number): number | undefined {
+  const blockIndex = findBlockIndexByLine(model, line)
+  if (blockIndex < 0) return undefined
+  const block = model.blocks[blockIndex]
+  if (line <= block.startLine) return block.startOffset
+  const linesToSkip = line - block.startLine
+  let cursor = 0
+  let skipped = 0
+  const src = block.rawSource
+  while (skipped < linesToSkip && cursor < src.length) {
+    const ch = src.charCodeAt(cursor)
+    if (ch === 10) {
+      skipped += 1
+      cursor += 1
+    } else if (ch === 13) {
+      skipped += 1
+      cursor += 1
+      if (src.charCodeAt(cursor) === 10) cursor += 1
+    } else {
+      cursor += 1
+    }
+  }
+  if (skipped < linesToSkip) return undefined
+  return block.startOffset + cursor
+}
+
 /* ------------------------- 页内锚点模型定位 ------------------------- */
 
 /** 页内锚点（hash 去掉 # 后的 id）在全文模型中的定位结果 */

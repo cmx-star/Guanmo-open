@@ -11,7 +11,7 @@ import { isTauri } from '@/hooks/useTauri'
 import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { createMarkdownPreviewModel, computeVisibleRange, findAnchorTarget, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
+import { createMarkdownPreviewModel, computeVisibleRange, findAnchorTarget, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, getSourceOffsetForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
 import {
   buildDocumentRangeInfo,
   buildDomRangesForSourceRange,
@@ -95,6 +95,8 @@ export interface MarkdownPreviewHandle {
   scrollToOffset: (offset: number) => void
   getTopForLine: (line: number) => number | undefined
   getLineForTop: (top: number) => number | undefined
+  /** 当前视口顶部对应的源码 offset（供搜索锚点定位最近匹配）；无容器/未挂载时返回 undefined */
+  getViewportOffset: () => number | undefined
   setSearchState: (state: PreviewSearchState | null) => void
   /** 基于可见文本投影搜索全文，返回源码 offset 匹配（供 SearchOverlay 统一计数语义） */
   searchVisible: (query: string) => Array<{ from: number; to: number }>
@@ -735,9 +737,25 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       )
     },
     getLineForTop(top: number) {
+      const container = scrollContainerRef.current
+      if (container) {
+        const mountedLine = getMountedPreviewLineForTop(model, blockRefs.current, container, top)
+        if (typeof mountedLine === 'number') return mountedLine
+      }
       return getEstimatedPreviewLineForTop(
         model, top, estimateBlockHeight, measuredHeightsRef.current,
       )
+    },
+    getViewportOffset() {
+      const container = scrollContainerRef.current
+      if (!container) return undefined
+      const top = container.scrollTop
+      const mountedLine = getMountedPreviewLineForTop(model, blockRefs.current, container, top)
+      const line = typeof mountedLine === 'number'
+        ? mountedLine
+        : getEstimatedPreviewLineForTop(model, top, estimateBlockHeight, measuredHeightsRef.current)
+      if (typeof line !== 'number') return undefined
+      return getSourceOffsetForLine(model, line)
     },
     scrollToLine(line: number) {
       scrollToLineInternal(line)
@@ -1708,6 +1726,28 @@ function estimatePreviewBlockHeight(block: PreviewBlock, fontSize: number, lineH
     default:
       return Math.max(20, lines * baseLinePx * 1.15 + 12)
   }
+}
+
+function getMountedPreviewLineForTop(
+  model: ReturnType<typeof createMarkdownPreviewModel>,
+  blockElements: Map<number, HTMLDivElement | null>,
+  container: HTMLElement,
+  top: number,
+): number | undefined {
+  const containerTop = container.getBoundingClientRect().top
+  for (const [index, element] of blockElements) {
+    const block = model.blocks[index]
+    if (!element || !block) continue
+    const rect = element.getBoundingClientRect()
+    if (rect.height <= 0) continue
+    const blockTop = rect.top - containerTop + container.scrollTop
+    const blockBottom = blockTop + rect.height
+    if (top < blockTop || top > blockBottom) continue
+    if (block.endLine <= block.startLine) return block.startLine
+    const progress = Math.max(0, Math.min(1, (top - blockTop) / rect.height))
+    return Math.round(block.startLine + (block.endLine - block.startLine) * progress)
+  }
+  return undefined
 }
 
 function CodeBlock({
