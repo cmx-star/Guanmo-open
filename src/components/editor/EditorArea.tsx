@@ -667,7 +667,11 @@ export function EditorArea() {
     }
   }, [leftPreviewMounted, leftPreviewVisible])
 
-  const toc = useMemo(() => extractToc(activePreview.content), [activePreview.content])
+  // 编辑模式的 TOC 直接从编辑器内容提取：预览实例未挂载（预热失败或尚未预热）时
+  // activePreview.content 为空，若统一走预览管道会导致编辑模式目录永不出现。
+  const editorToc = useMemo(() => extractToc(activeTab?.content || ''), [activeTab?.content])
+  const previewToc = useMemo(() => extractToc(activePreview.content), [activePreview.content])
+  const toc = viewMode === 'edit' ? editorToc : previewToc
   const rightToc = useMemo(() => extractToc(rightPreview.content), [rightPreview.content])
   const modeDerivationsEnabled = viewMode !== 'edit'
   const activeContentSignature = useMemo(
