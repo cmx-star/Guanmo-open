@@ -70,6 +70,10 @@ const LARGE_PREVIEW_UPDATE_DELAY = 650
 const HUGE_PREVIEW_UPDATE_DELAY = 900
 const SCROLL_SYNC_TOP_OFFSET = 32
 const SCROLL_SYNC_INPUT_PAUSE_MS = 700
+/** 预览→编辑器反向滚动同步只接受“用户主动滚动预览”产生的 scroll 事件；
+ *  渲染补偿（内容更新锚点补偿、scrollTop 夹取、位置恢复、异步图片/KaTeX 高度变化）
+ *  产生的 scroll 事件一律不得反向移动编辑器。该窗口覆盖滚轮惯性滚动与平滑滚动时长。 */
+const PREVIEW_SYNC_GESTURE_WINDOW_MS = 800
 const PREVIEW_SWITCH_MARK_PREFIX = 'guanmo:preview-switch'
 
 interface ScheduledPreviewContent {
@@ -197,6 +201,10 @@ export function EditorArea() {
   const editorTocFrameRef = useRef<number | null>(null)
   const previewScrollFrameRef = useRef<number | null>(null)
   const lastEditorInputAtRef = useRef(0)
+  /** 预览 pane 上最近一次用户滚动手势（wheel / pointerdown）时间戳 */
+  const previewGestureAtRef = useRef(0)
+  /** 指针当前是否按在预览 pane 上（覆盖滚动条拖拽、触控拖拽的长时滚动） */
+  const previewPointerDownRef = useRef(false)
   const [, setPreviewRestoreTick] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
   const [rightPaneDragOver, setRightPaneDragOver] = useState(false)
@@ -1114,12 +1122,12 @@ export function EditorArea() {
     }
   }, [activeTab?.id, saveEditorPositionForTab, scheduleFlush, updateEditorHeading, viewMode])
 
+  // 预览内容更新（版本变化）只恢复预览自身位置，保证右侧渲染稳定；
+  // 绝不在内容更新时反向恢复编辑器位置——否则右侧渲染会把左侧视口拉走
+  // （编辑左侧时每次预览刷新都可能导致左侧跳动）。
   useLayoutEffect(() => {
     if (!activeTab?.id) return
     const restoreStartedAt = import.meta.env.DEV ? performance.now() : 0
-    if (viewMode === 'edit' || viewMode === 'edit-preview') {
-      restoreEditorReadingPosition(activeTab.id)
-    }
     if (viewMode === 'preview' || viewMode === 'edit-preview' || viewMode === 'dual-preview') {
       restorePreviewReadingPosition(activeTab.id, leftPreviewRef.current, 'left')
     }
@@ -1134,12 +1142,19 @@ export function EditorArea() {
   }, [
     activePreview.version,
     activeTab?.id,
-    restoreEditorReadingPosition,
     restorePreviewReadingPosition,
     rightPreview.version,
     rightTab?.id,
     viewMode,
   ])
+
+  // 编辑器阅读位置只在模式切换 / 标签页切换（进入编辑器或换文档）时恢复，
+  // 不随预览内容版本变化重放：编辑过程中右侧渲染不得影响左侧位置。
+  useLayoutEffect(() => {
+    if (!activeTab?.id) return
+    if (viewMode !== 'edit' && viewMode !== 'edit-preview') return
+    restoreEditorReadingPosition(activeTab.id)
+  }, [activeTab?.id, restoreEditorReadingPosition, viewMode])
 
   // 切换标签页时立即 flush 上一个标签页的位置
   useEffect(() => {
@@ -1303,7 +1318,13 @@ export function EditorArea() {
 
     const pos = view.state.doc.line(line).from
     setScrollSyncSource('preview')
-    view.scrollDOM.scrollTop = Math.max(0, view.lineBlockAt(pos).top - SCROLL_SYNC_TOP_OFFSET)
+    // 长行、表格等内容尚未进入视口时，CodeMirror 的高度映射可能仍是估算值。
+    // 直接读取 lineBlockAt(pos).top 会把这个瞬时估算固化为 scrollTop，待布局测量
+    // 校正后编辑器仍停在错误文档块。交给 CodeMirror 的滚动 effect，使其在测量周期内
+    // 完成目标行定位与必要的二次校正。
+    view.dispatch({
+      effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: SCROLL_SYNC_TOP_OFFSET }),
+    })
   }, [setScrollSyncSource])
 
   useEffect(() => {
@@ -1326,6 +1347,11 @@ export function EditorArea() {
 
     const handlePreviewScroll = () => {
       if (isRestoringScrollRef.current) return
+      // 反向同步只接受用户主动滚动预览（滚轮 / 按住拖拽滚动条 / 触控）产生的
+      // scroll 事件；渲染补偿（内容更新锚点补偿、scrollTop 夹取、预览位置恢复、
+      // 异步图片/KaTeX 高度变化）产生的 scroll 事件一律不得反向移动编辑器。
+      if (!previewPointerDownRef.current
+        && Date.now() - previewGestureAtRef.current > PREVIEW_SYNC_GESTURE_WINDOW_MS) return
       if (scrollSyncSessionRef.current.source === 'editor') return
       if (Date.now() - lastEditorInputAtRef.current < SCROLL_SYNC_INPUT_PAUSE_MS) return
       if (previewScrollFrameRef.current !== null) return
@@ -1341,18 +1367,34 @@ export function EditorArea() {
     }
 
     const handleEditorWheel = () => setScrollSyncSource('editor')
-    const handlePreviewWheel = () => setScrollSyncSource('preview')
+    const handlePreviewWheel = () => {
+      previewGestureAtRef.current = Date.now()
+      setScrollSyncSource('preview')
+    }
+    const handlePreviewPointerDown = () => {
+      previewPointerDownRef.current = true
+      previewGestureAtRef.current = Date.now()
+    }
+    const handlePreviewPointerUp = () => {
+      previewPointerDownRef.current = false
+    }
 
     view.scrollDOM.addEventListener('scroll', handleEditorScroll, { passive: true })
     preview.addEventListener('scroll', handlePreviewScroll, { passive: true })
     view.scrollDOM.addEventListener('wheel', handleEditorWheel, { passive: true })
     preview.addEventListener('wheel', handlePreviewWheel, { passive: true })
+    preview.addEventListener('pointerdown', handlePreviewPointerDown, { passive: true })
+    window.addEventListener('pointerup', handlePreviewPointerUp, true)
+    window.addEventListener('pointercancel', handlePreviewPointerUp, true)
 
     return () => {
       view.scrollDOM.removeEventListener('scroll', handleEditorScroll)
       preview.removeEventListener('scroll', handlePreviewScroll)
       view.scrollDOM.removeEventListener('wheel', handleEditorWheel)
       preview.removeEventListener('wheel', handlePreviewWheel)
+      preview.removeEventListener('pointerdown', handlePreviewPointerDown)
+      window.removeEventListener('pointerup', handlePreviewPointerUp, true)
+      window.removeEventListener('pointercancel', handlePreviewPointerUp, true)
       if (editorScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(editorScrollFrameRef.current)
         editorScrollFrameRef.current = null
@@ -1573,6 +1615,9 @@ export function EditorArea() {
   }, [handleInsertImagePaths])
 
   const jumpToPreviewHeading = useCallback((item: TocItem) => {
+    // 目录跳转属于用户在预览侧的主动导航：标记手势，使预览平滑滚动期间的
+    // scroll 事件可继续反向同步编辑器（与用户滚轮滚动预览一致）。
+    previewGestureAtRef.current = Date.now()
     leftMarkdownPreviewRef.current?.scrollToLine(item.line)
   }, [])
 

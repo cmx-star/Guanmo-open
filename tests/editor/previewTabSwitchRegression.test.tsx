@@ -1,5 +1,13 @@
 import { act, fireEvent, render } from '@testing-library/react'
+import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+}
+if (!Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = () => new DOMRect()
+}
 
 // Mock IntersectionObserver for jsdom
 if (typeof IntersectionObserver === 'undefined') {
@@ -399,6 +407,7 @@ describe('preview visibility regression: restoredPreviewKeysRef race', () => {
 
   describe('virtualized preview scroll synchronization', () => {
     it('keeps advancing the editor after the preview scrolls beyond the initially mounted blocks', () => {
+      const scrollIntoViewSpy = vi.spyOn(EditorView, 'scrollIntoView')
       const longContent = '# 连续同步测试\n\n' + Array.from({ length: 240 }, (_, i) => `段落 ${i + 1}\n第二行 ${i + 1}`).join('\n\n')
       const tab = anonymousTab('tab-a', longContent)
       setupEditor([tab], 'tab-a', 'edit-preview', { syncScroll: true, modePerformancePolicy: 'balanced' })
@@ -417,7 +426,7 @@ describe('preview visibility regression: restoredPreviewKeysRef race', () => {
         fireEvent.scroll(preview!)
         vi.advanceTimersByTime(20)
       })
-      const firstEditorTop = editorScroller!.scrollTop
+      const firstTargetPos = scrollIntoViewSpy.mock.calls.at(-1)?.[0]
 
       act(() => {
         preview!.scrollTop = 4_000
@@ -425,9 +434,16 @@ describe('preview visibility regression: restoredPreviewKeysRef race', () => {
         fireEvent.scroll(preview!)
         vi.advanceTimersByTime(20)
       })
-      const secondEditorTop = editorScroller!.scrollTop
+      const secondTargetPos = scrollIntoViewSpy.mock.calls.at(-1)?.[0]
 
-      expect(secondEditorTop).toBeGreaterThan(firstEditorTop)
+      expect(firstTargetPos).toEqual(expect.any(Number))
+      expect(secondTargetPos).toEqual(expect.any(Number))
+      expect(secondTargetPos!).toBeGreaterThan(firstTargetPos!)
+      expect(scrollIntoViewSpy).toHaveBeenLastCalledWith(
+        secondTargetPos,
+        { y: 'start', yMargin: 32 },
+      )
+      scrollIntoViewSpy.mockRestore()
 
       act(() => {
         fireEvent.scroll(editorScroller!)
@@ -468,6 +484,36 @@ describe('preview visibility regression: restoredPreviewKeysRef race', () => {
         editorScrollTop: 1_200,
         previewScrollTop: undefined,
       })
+    })
+
+    it('preview render-induced scroll and content update never move the left editor', () => {
+      const longContent = '# 左侧稳定测试\n\n' + Array.from({ length: 160 }, (_, i) => `段落 ${i + 1}\n第二行 ${i + 1}`).join('\n\n')
+      const tab = anonymousTab('tab-a', longContent)
+      setupEditor([tab], 'tab-a', 'edit-preview', { syncScroll: true, modePerformancePolicy: 'balanced' })
+      const { container } = render(<EditorArea />)
+      act(() => vi.advanceTimersByTime(50))
+
+      const preview = getLeftPreviewContainer(container)!
+      const editorScroller = container.querySelector<HTMLElement>('.cm-scroller')!
+      expect(editorScroller).toBeTruthy()
+
+      // 模拟右侧渲染补偿产生的预览滚动（无任何用户手势）：预览自身滚动位置变化
+      act(() => {
+        Object.defineProperty(preview!, 'scrollTop', { value: 2_000, writable: true, configurable: true })
+        fireEvent.scroll(preview!)
+        vi.advanceTimersByTime(20)
+      })
+      // 渲染补偿滚动不得反向移动编辑器
+      expect(editorScroller!.scrollTop).toBe(0)
+
+      // 左侧内容变化 → 预览防抖后同步渲染（版本变化）
+      act(() => {
+        useEditorStore.getState().updateTabContent('tab-a', tab.content + '\n\n新增段落')
+        vi.advanceTimersByTime(350)
+      })
+
+      // 预览更新后，编辑器滚动位置仍保持原样 —— 右侧渲染不得影响左侧位置
+      expect(editorScroller!.scrollTop).toBe(0)
     })
   })
 })

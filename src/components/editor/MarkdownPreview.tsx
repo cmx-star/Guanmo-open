@@ -739,7 +739,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     getLineForTop(top: number) {
       const container = scrollContainerRef.current
       if (container) {
-        const mountedLine = getMountedPreviewLineForTop(model, blockRefs.current, container, top)
+        const mountedLine = getMountedPreviewLineForTop(model, rootRef.current, container, top)
         if (typeof mountedLine === 'number') return mountedLine
       }
       return getEstimatedPreviewLineForTop(
@@ -750,7 +750,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       const container = scrollContainerRef.current
       if (!container) return undefined
       const top = container.scrollTop
-      const mountedLine = getMountedPreviewLineForTop(model, blockRefs.current, container, top)
+      const mountedLine = getMountedPreviewLineForTop(model, rootRef.current, container, top)
       const line = typeof mountedLine === 'number'
         ? mountedLine
         : getEstimatedPreviewLineForTop(model, top, estimateBlockHeight, measuredHeightsRef.current)
@@ -1730,21 +1730,23 @@ function estimatePreviewBlockHeight(block: PreviewBlock, fontSize: number, lineH
 
 function getMountedPreviewLineForTop(
   model: ReturnType<typeof createMarkdownPreviewModel>,
-  blockElements: Map<number, HTMLDivElement | null>,
+  root: HTMLElement | null,
   container: HTMLElement,
   top: number,
 ): number | undefined {
-  const containerTop = container.getBoundingClientRect().top
-  for (const [index, element] of blockElements) {
+  if (!root) return undefined
+  const targetViewportTop = container.getBoundingClientRect().top + top - container.scrollTop
+  for (const element of root.querySelectorAll<HTMLElement>('[data-md-block-index]')) {
+    const index = Number(element.dataset.mdBlockIndex)
+    if (!Number.isInteger(index)) continue
     const block = model.blocks[index]
-    if (!element || !block) continue
+    if (!block) continue
     const rect = element.getBoundingClientRect()
     if (rect.height <= 0) continue
-    const blockTop = rect.top - containerTop + container.scrollTop
-    const blockBottom = blockTop + rect.height
-    if (top < blockTop || top > blockBottom) continue
+    if (targetViewportTop > rect.bottom) continue
+    if (targetViewportTop <= rect.top) return block.startLine
     if (block.endLine <= block.startLine) return block.startLine
-    const progress = Math.max(0, Math.min(1, (top - blockTop) / rect.height))
+    const progress = Math.max(0, Math.min(1, (targetViewportTop - rect.top) / rect.height))
     return Math.round(block.startLine + (block.endLine - block.startLine) * progress)
   }
   return undefined
