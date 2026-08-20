@@ -11,7 +11,7 @@ import { isTauri } from '@/hooks/useTauri'
 import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, type PreviewBlock } from '@/services/markdownPreviewModel'
+import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
 import {
   buildDocumentRangeInfo,
   buildDomRangesForSourceRange,
@@ -96,6 +96,8 @@ export interface MarkdownPreviewHandle {
   getTopForLine: (line: number) => number | undefined
   getLineForTop: (top: number) => number | undefined
   setSearchState: (state: PreviewSearchState | null) => void
+  /** 基于可见文本投影搜索全文，返回源码 offset 匹配（供 SearchOverlay 统一计数语义） */
+  searchVisible: (query: string) => Array<{ from: number; to: number }>
   getSelection: () => PreviewSelectionSnapshot | null
   selectAll: () => void
   clearSelection: () => void
@@ -476,28 +478,19 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     syncAllMountedBlocks({ search: false, selection: true })
   }, [syncAllMountedBlocks])
 
-  /** SearchOverlay 入口：全文搜索一次并按 blockId 建立匹配索引（O(1) 查询） */
+  /** SearchOverlay 入口：基于可见文本投影全文搜索一次并按 blockId 建立匹配索引（O(1) 查询） */
   const setSearchStateImpl = useCallback((state: PreviewSearchState | null) => {
     searchStateRef.current = state && state.query ? state : null
     const query = searchStateRef.current?.query
     const map = new Map<string, Array<{ from: number; to: number }>>()
     if (query) {
       const currentModel = modelRef.current
-      const lower = query.toLowerCase()
-      const src = currentModel.rawContent
-      let from = 0
-      for (;;) {
-        const idx = src.toLowerCase().indexOf(lower, from)
-        if (idx < 0) break
-        const to = idx + query.length
-        const blockIndex = findBlockIndexByOffset(currentModel, idx)
-        if (blockIndex >= 0) {
-          const block = currentModel.blocks[blockIndex]
-          const list = map.get(block.blockId)
-          if (list) list.push({ from: idx, to })
-          else map.set(block.blockId, [{ from: idx, to }])
-        }
-        from = idx + Math.max(1, query.length)
+      for (const hit of searchVisibleText(currentModel, query)) {
+        const block = currentModel.blocks[hit.blockIndex]
+        if (!block) continue
+        const list = map.get(block.blockId)
+        if (list) list.push({ from: hit.from, to: hit.to })
+        else map.set(block.blockId, [{ from: hit.from, to: hit.to }])
       }
     }
     searchMatchesByBlockRef.current = query ? map : null
@@ -675,6 +668,9 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       if (typeof top === 'number') container.scrollTo({ top: Math.max(0, top - 24) })
     },
     setSearchState: setSearchStateImpl,
+    searchVisible(query: string) {
+      return searchVisibleText(modelRef.current, query).map((hit) => ({ from: hit.from, to: hit.to }))
+    },
     getSelection() {
       const selection = selectionRangeRef.current
       if (!selection) return null

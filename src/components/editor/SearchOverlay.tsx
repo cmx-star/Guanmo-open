@@ -63,6 +63,8 @@ interface SearchOverlayProps {
     previewRef: React.RefObject<{
       scrollToOffset: (offset: number) => void
       setSearchState?: (state: { query: string; activeOffset?: number } | null) => void
+      /** 可见文本投影搜索（与预览高亮同一语义）；未提供时回退原文扫描 */
+      searchVisible?: (query: string) => Array<{ from: number; to: number }>
     } | null>
   }>
 }
@@ -201,9 +203,13 @@ export function SearchOverlay({ onClose, editorViewRef, previewSources = [] }: S
   }, [previewSources, syncPreviewSearchState])
 
   const searchPreview = useCallback((searchQuery: string) => {
-    const matches = previewSources.flatMap((source, sourceIndex) => (
-      findMatches(source.content, searchQuery, false).map((match) => ({ ...match, sourceIndex }))
-    ))
+    const matches = previewSources.flatMap((source, sourceIndex) => {
+      // 优先使用预览实例的可见文本投影搜索（与预览高亮、复制同一语义），
+      // 避免命中链接 URL / Markdown 标记等不可见源码；实例未提供时回退原文扫描。
+      const visible = source.previewRef.current?.searchVisible?.(searchQuery)
+      if (visible) return visible.map((match) => ({ ...match, sourceIndex }))
+      return findMatches(source.content, searchQuery, false).map((match) => ({ ...match, sourceIndex }))
+    })
     previewMatchesRef.current = matches
     currentMatchRef.current = 0
     setCurrentMatch(0)
