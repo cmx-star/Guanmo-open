@@ -382,6 +382,7 @@ export function getEstimatedPreviewTopForLine(
   for (let i = 0; i < blocks.length; i += 1) {
     const blk = blocks[i]
     const h = measuredHeights?.get(blk.blockId) ?? estimateBlockHeight(blk, i)
+    if (line < blk.startLine) return cursor
     if (line >= blk.startLine && line <= blk.endLine) {
       const progress = blk.endLine > blk.startLine
         ? (line - blk.startLine) / (blk.endLine - blk.startLine)
@@ -391,6 +392,37 @@ export function getEstimatedPreviewTopForLine(
     cursor += h
   }
   return cursor > 0 ? cursor : undefined
+}
+
+/**
+ * 根据预览容器内的像素位置反推源码行号。与 getEstimatedPreviewTopForLine
+ * 共用全文块模型和高度数据，避免依赖当前虚拟化窗口中挂载的 DOM。
+ */
+export function getEstimatedPreviewLineForTop(
+  model: MarkdownPreviewModel,
+  top: number,
+  estimateBlockHeight: (block: PreviewBlock, index: number) => number,
+  measuredHeights?: Map<string, number>,
+): number | undefined {
+  const { blocks } = model
+  if (blocks.length === 0) return undefined
+
+  const targetTop = Math.max(0, top)
+  let cursor = 0
+  for (let i = 0; i < blocks.length; i += 1) {
+    const block = blocks[i]
+    const height = measuredHeights?.get(block.blockId) ?? estimateBlockHeight(block, i)
+    const blockHeight = Math.max(1, height)
+    const blockBottom = cursor + blockHeight
+    if (targetTop < blockBottom || i === blocks.length - 1) {
+      if (block.endLine <= block.startLine) return block.startLine
+      const progress = Math.max(0, Math.min(1, (targetTop - cursor) / blockHeight))
+      return Math.round(block.startLine + (block.endLine - block.startLine) * progress)
+    }
+    cursor = blockBottom
+  }
+
+  return blocks[blocks.length - 1].endLine
 }
 
 /* ----------------------------- 内部辅助 ----------------------------- */

@@ -97,6 +97,7 @@ function setupEditor(
     pendingReveal: null,
     recentFiles: [],
     favorites: [],
+    readingPositions: {},
   })
   useSettingsStore.setState((state) => ({
     editor: {
@@ -396,40 +397,77 @@ describe('preview visibility regression: restoredPreviewKeysRef race', () => {
     })
   })
 
-  describe('anchor cache invalidation after visibility change', () => {
-    it('preview scroll sync works after mode cycle that hides and reveals preview', () => {
-      // The getCachedPreviewAnchors cache stores empty anchors when the container
-      // is visibility:hidden. When the preview becomes visible again, the cache
-      // should be invalidated so fresh anchors are queried from the DOM.
-      const longContent = '# 缓存测试\n\n' + Array.from({ length: 60 }, (_, i) => `段落 ${i + 1}`).join('\n\n')
+  describe('virtualized preview scroll synchronization', () => {
+    it('keeps advancing the editor after the preview scrolls beyond the initially mounted blocks', () => {
+      const longContent = '# 连续同步测试\n\n' + Array.from({ length: 240 }, (_, i) => `段落 ${i + 1}\n第二行 ${i + 1}`).join('\n\n')
       const tab = anonymousTab('tab-a', longContent)
       setupEditor([tab], 'tab-a', 'edit-preview', { syncScroll: true, modePerformancePolicy: 'balanced' })
       const { container } = render(<EditorArea />)
+      act(() => vi.advanceTimersByTime(50))
 
       const preview = getLeftPreviewContainer(container)
       expect(preview).toBeTruthy()
+      expect(preview).toHaveStyle({ overflowAnchor: 'none' })
+      const editorScroller = container.querySelector<HTMLElement>('.cm-scroller')
+      expect(editorScroller).toBeTruthy()
 
-      // Scroll preview to save position
       act(() => {
-        Object.defineProperty(preview!, 'scrollTop', { value: 200, writable: true, configurable: true })
+        Object.defineProperty(preview!, 'scrollTop', { value: 600, writable: true, configurable: true })
+        fireEvent.wheel(preview!, { deltaY: 300 })
         fireEvent.scroll(preview!)
+        vi.advanceTimersByTime(20)
       })
+      const firstEditorTop = editorScroller!.scrollTop
+
+      act(() => {
+        preview!.scrollTop = 4_000
+        fireEvent.wheel(preview!, { deltaY: 800 })
+        fireEvent.scroll(preview!)
+        vi.advanceTimersByTime(20)
+      })
+      const secondEditorTop = editorScroller!.scrollTop
+
+      expect(secondEditorTop).toBeGreaterThan(firstEditorTop)
+
+      act(() => {
+        fireEvent.scroll(editorScroller!)
+        vi.advanceTimersByTime(600)
+      })
+      expect(useEditorStore.getState().readingPositions['tab-a']).toMatchObject({
+        previewScrollTop: 4_000,
+        editorScrollTop: undefined,
+      })
+    })
+
+    it('does not persist the preview target scroll produced by an editor scroll', () => {
+      const longContent = '# 来源隔离测试\n\n' + Array.from({ length: 160 }, (_, i) => `段落 ${i + 1}`).join('\n\n')
+      setupEditor([anonymousTab('tab-a', longContent)], 'tab-a', 'edit-preview', { syncScroll: true })
+      const { container } = render(<EditorArea />)
       act(() => vi.advanceTimersByTime(50))
 
-      // edit-preview → edit (preview hidden but stays mounted)
-      act(() => useEditorStore.getState().setViewMode('edit'))
-      act(() => vi.advanceTimersByTime(200))
+      const preview = getLeftPreviewContainer(container)!
+      const editorScroller = container.querySelector<HTMLElement>('.cm-scroller')!
+      const scrollTo = vi.fn((options: ScrollToOptions) => {
+        preview.scrollTop = Number(options.top ?? 0)
+      })
+      Object.defineProperty(preview, 'scrollTo', { configurable: true, value: scrollTo })
 
-      // edit → edit-preview (preview revealed)
-      act(() => useEditorStore.getState().setViewMode('edit-preview'))
-      act(() => vi.advanceTimersByTime(200))
+      act(() => {
+        editorScroller.scrollTop = 1_200
+        fireEvent.wheel(editorScroller, { deltaY: 500 })
+        fireEvent.scroll(editorScroller)
+        vi.advanceTimersByTime(20)
+      })
+      expect(scrollTo).toHaveBeenCalled()
 
-      // Preview should be visible and content should render
-      const previewAfter = getLeftPreviewContainer(container)
-      expect(previewAfter).toBeTruthy()
-      expect(previewAfter!.style.visibility).not.toBe('hidden')
-      expect(container.textContent).toContain('缓存测试')
-      expect(container.textContent).toContain('段落')
+      act(() => {
+        fireEvent.scroll(preview)
+        vi.advanceTimersByTime(600)
+      })
+      expect(useEditorStore.getState().readingPositions['tab-a']).toMatchObject({
+        editorScrollTop: 1_200,
+        previewScrollTop: undefined,
+      })
     })
   })
 })

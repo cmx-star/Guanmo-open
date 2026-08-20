@@ -11,7 +11,7 @@ import { isTauri } from '@/hooks/useTauri'
 import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewTopForLine, type PreviewBlock } from '@/services/markdownPreviewModel'
+import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, type PreviewBlock } from '@/services/markdownPreviewModel'
 import {
   buildDocumentRangeInfo,
   buildDomRangesForSourceRange,
@@ -94,6 +94,7 @@ export interface MarkdownPreviewHandle {
   scrollToLine: (line: number) => void
   scrollToOffset: (offset: number) => void
   getTopForLine: (line: number) => number | undefined
+  getLineForTop: (top: number) => number | undefined
   setSearchState: (state: PreviewSearchState | null) => void
   getSelection: () => PreviewSelectionSnapshot | null
   selectAll: () => void
@@ -646,6 +647,11 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
         model, line, estimateBlockHeight, measuredHeightsRef.current,
       )
     },
+    getLineForTop(top: number) {
+      return getEstimatedPreviewLineForTop(
+        model, top, estimateBlockHeight, measuredHeightsRef.current,
+      )
+    },
     scrollToLine(line: number) {
       const container = scrollContainerRef.current
       if (!container) return
@@ -711,6 +717,17 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   // Measure real heights of mounted blocks
   useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    const fallback = scrollStateRef.current
+    const scrollTop = container ? container.scrollTop : fallback.scrollTop
+    const viewportHeight = container ? container.clientHeight : fallback.viewportHeight
+    // 锚点：视口顶部首个可见块（overscan 0），与块 ResizeObserver 补偿路径语义一致
+    const anchorBefore = computeVisibleRange(
+      model, scrollTop, scrollTop + viewportHeight,
+      measuredHeightsRef.current, estimateBlockHeight, 0,
+    )
+    const anchorIndex = anchorBefore.startIndex
+    const anchorTopBefore = anchorBefore.blockTops[anchorIndex] ?? 0
     let changed = false
     for (let i = visible.startIndex; i < visible.endIndex; i += 1) {
       const el = blockRefs.current.get(i)
@@ -722,10 +739,25 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
         changed = true
       }
     }
-    if (changed) {
+    if (!changed) return
+    if (!container) {
       setScrollState((s) => ({ ...s }))
+      return
     }
-  }, [visible.startIndex, visible.endIndex, model.blocks, scrollState.viewportWidth])
+    // 向上滚动时，视口上方新挂载块"估计→实测"的高度修正会整体平移视口内容；
+    // 以锚点块 top 位移补偿 scrollTop，消除视觉跳动（与块 ResizeObserver 补偿路径一致）
+    const anchorAfter = computeVisibleRange(
+      model, scrollTop, scrollTop + viewportHeight,
+      measuredHeightsRef.current, estimateBlockHeight, 0,
+    )
+    const anchorDelta = (anchorAfter.blockTops[anchorIndex] ?? anchorTopBefore) - anchorTopBefore
+    if (anchorDelta !== 0) container.scrollTop += anchorDelta
+    setScrollState({
+      scrollTop: container.scrollTop,
+      viewportHeight: container.clientHeight,
+      viewportWidth: container.clientWidth,
+    })
+  }, [visible.startIndex, visible.endIndex, model, estimateBlockHeight])
 
   const overlayRectRef = useRef<{ top: number; left: number; width: number } | null>(null)
 

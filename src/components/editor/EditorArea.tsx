@@ -187,7 +187,6 @@ export function EditorArea() {
   const rightPreviewRef = useRef<HTMLDivElement>(null)
   const leftMarkdownPreviewRef = useRef<MarkdownPreviewHandle>(null)
   const rightMarkdownPreviewRef = useRef<MarkdownPreviewHandle>(null)
-  const previewAnchorCacheRef = useRef<WeakMap<HTMLElement, PreviewAnchorCache>>(new WeakMap())
   const isRestoringScrollRef = useRef(false)
   const restoreScrollFrameRef = useRef<number | null>(null)
   const editorRestoreFrameRef = useRef<number | null>(null)
@@ -917,7 +916,9 @@ export function EditorArea() {
 
   const getStoredPreviewTop = useCallback((tabId: string | null | undefined, pane: 'left' | 'right' = 'left') => {
     if (!tabId) return 0
-    const position = readingPositionsRef.current.getForPane(tabId, pane)
+    const position = useEditorStore.getState().viewMode === 'dual-preview'
+      ? readingPositionsRef.current.getForPane(tabId, pane)
+      : readingPositionsRef.current.get(tabId)
     return position?.previewScrollTop ?? 0
   }, [])
 
@@ -936,19 +937,6 @@ export function EditorArea() {
       )
     )
   )
-
-  // Invalidate preview anchor cache when preview transitions from hidden to
-  // visible. While hidden, getVisiblePreviewAnchors() returns [] (all elements
-  // filtered as visibility:hidden) and that empty array gets cached. When the
-  // preview is revealed, the cache key (version/clientWidth/scrollHeight) may
-  // not change, so the stale empty array is returned — breaking scroll sync.
-  const prevLeftMaskedRef = useRef(leftPreviewMasked)
-  useLayoutEffect(() => {
-    if (prevLeftMaskedRef.current && !leftPreviewMasked) {
-      previewAnchorCacheRef.current = new WeakMap()
-    }
-    prevLeftMaskedRef.current = leftPreviewMasked
-  }, [leftPreviewMasked])
 
   const rightPreviewMasked = Boolean(
     rightTab?.id
@@ -976,16 +964,20 @@ export function EditorArea() {
   const savePreviewReadingPosition = useCallback((
     tabId: string,
     container: HTMLElement | null,
-    previewVersion: number,
+    previewHandle: MarkdownPreviewHandle | null,
     pane: 'left' | 'right' = 'left'
   ) => {
     if (isRestoringScrollRef.current) return
     if (!container) return
-    // 保存到 tabId key，与编辑器共用同一个位置
-    readingPositionsRef.current.save(tabId, {
+    const position = {
       previewScrollTop: container.scrollTop,
-      topLine: getPreviewLineAtTop(container, previewVersion, previewAnchorCacheRef.current),
-    })
+      topLine: previewHandle?.getLineForTop(container.scrollTop + SCROLL_SYNC_TOP_OFFSET),
+    }
+    if (viewModeRef.current === 'dual-preview') {
+      readingPositionsRef.current.saveForPane(tabId, pane, position)
+    } else {
+      readingPositionsRef.current.save(tabId, position)
+    }
   }, [])
 
   const withRestoreLock = useCallback((restore: () => void) => {
@@ -1056,8 +1048,9 @@ export function EditorArea() {
     container: HTMLElement | null,
     pane: 'left' | 'right'
   ) => {
-    // 从 tabId key 读取位置，与编辑器共用同一个位置
-    const position = readingPositionsRef.current.get(tabId)
+    const position = useEditorStore.getState().viewMode === 'dual-preview'
+      ? readingPositionsRef.current.getForPane(tabId, pane)
+      : readingPositionsRef.current.get(tabId)
     if (!container) return
     const previewHandle = pane === 'left' ? leftMarkdownPreviewRef.current : rightMarkdownPreviewRef.current
     const lineTop = position?.previewScrollTop == null && position?.topLine != null
@@ -1078,9 +1071,11 @@ export function EditorArea() {
     const handleScroll = () => {
       const currentMode = useEditorStore.getState().viewMode
       if (currentMode !== 'edit' && currentMode !== 'edit-preview') return
-      saveEditorPositionForTab(activeTab.id)
-      scheduleFlush()
-      setTocFocus('editor')
+      if (scrollSyncSessionRef.current.source !== 'preview') {
+        saveEditorPositionForTab(activeTab.id)
+        scheduleFlush()
+        setTocFocus('editor')
+      }
       if (editorTocFrameRef.current !== null || !view) return
       editorTocFrameRef.current = window.requestAnimationFrame(() => {
         editorTocFrameRef.current = null
@@ -1323,19 +1318,28 @@ export function EditorArea() {
       if (previewScrollFrameRef.current !== null) return
       previewScrollFrameRef.current = window.requestAnimationFrame(() => {
         previewScrollFrameRef.current = null
-        const line = getPreviewLineAtTop(preview, activePreview.version, previewAnchorCacheRef.current)
+        const line = leftMarkdownPreviewRef.current?.getLineForTop(
+          preview.scrollTop + SCROLL_SYNC_TOP_OFFSET,
+        )
         if (typeof line === 'number') {
           syncEditorToPreviewLine(line)
         }
       })
     }
 
+    const handleEditorWheel = () => setScrollSyncSource('editor')
+    const handlePreviewWheel = () => setScrollSyncSource('preview')
+
     view.scrollDOM.addEventListener('scroll', handleEditorScroll, { passive: true })
     preview.addEventListener('scroll', handlePreviewScroll, { passive: true })
+    view.scrollDOM.addEventListener('wheel', handleEditorWheel, { passive: true })
+    preview.addEventListener('wheel', handlePreviewWheel, { passive: true })
 
     return () => {
       view.scrollDOM.removeEventListener('scroll', handleEditorScroll)
       preview.removeEventListener('scroll', handlePreviewScroll)
+      view.scrollDOM.removeEventListener('wheel', handleEditorWheel)
+      preview.removeEventListener('wheel', handlePreviewWheel)
       if (editorScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(editorScrollFrameRef.current)
         editorScrollFrameRef.current = null
@@ -1345,7 +1349,7 @@ export function EditorArea() {
         previewScrollFrameRef.current = null
       }
     }
-  }, [activeTab?.id, activePreview.version, syncEditorToPreviewLine, syncPreviewToEditorLine, syncScroll, viewMode])
+  }, [activeTab?.id, activePreview.version, setScrollSyncSource, syncEditorToPreviewLine, syncPreviewToEditorLine, syncScroll, viewMode])
 
   const handleSave = useCallback(async () => {
     const state = useEditorStore.getState()
@@ -1427,16 +1431,19 @@ export function EditorArea() {
 
   const handleLeftPreviewScroll = useCallback(() => {
     if (!activeTab?.id) return
+    if (viewModeRef.current === 'edit-preview' && scrollSyncSessionRef.current.source === 'editor') return
+    if (isRestoringScrollRef.current) return
     if (viewModeRef.current === 'edit-preview') setTocFocus('preview')
-    savePreviewReadingPosition(activeTab.id, leftPreviewRef.current, activePreview.version, 'left')
+    savePreviewReadingPosition(activeTab.id, leftPreviewRef.current, leftMarkdownPreviewRef.current, 'left')
     scheduleFlush()
-  }, [activePreview.version, activeTab?.id, savePreviewReadingPosition, scheduleFlush])
+  }, [activeTab?.id, savePreviewReadingPosition, scheduleFlush])
 
   const handleRightPreviewScroll = useCallback(() => {
     if (!rightTab?.id) return
-    savePreviewReadingPosition(rightTab.id, rightPreviewRef.current, rightPreview.version, 'right')
+    if (isRestoringScrollRef.current) return
+    savePreviewReadingPosition(rightTab.id, rightPreviewRef.current, rightMarkdownPreviewRef.current, 'right')
     scheduleFlush()
-  }, [rightPreview.version, rightTab?.id, savePreviewReadingPosition, scheduleFlush])
+  }, [rightTab?.id, savePreviewReadingPosition, scheduleFlush])
 
   const jumpToLine = useCallback((line: number) => {
     const view = editorViewRef.current
@@ -1920,7 +1927,7 @@ export function EditorArea() {
                 ref={leftPreviewRef}
                 data-product-tour="preview-area"
                 className={`${leftPreviewVisible ? 'min-w-0 flex-1' : 'hidden'} ${viewMode === 'dual-preview' ? 'border-r border-gm-border-subtle' : ''} ${viewMode === 'edit-preview' ? 'gm-preview-heading-clickable' : ''} ${isFullscreen ? 'gm-fullscreen-preview-content py-6' : 'p-6'} ${isFullscreen && viewMode === 'edit-preview' ? 'gm-fullscreen-content-split-right' : isFullscreen && viewMode === 'dual-preview' ? 'gm-fullscreen-content-split-left' : ''} ${fullscreenTocExpanded && viewMode !== 'dual-preview' ? `gm-fullscreen-toc-adjacent ${fullscreenTocWidthClass}` : ''} overflow-y-auto overflow-x-hidden select-text bg-gm-surface relative`}
-                style={leftPreviewMasked ? { visibility: 'hidden' } : undefined}
+                style={{ overflowAnchor: 'none', ...(leftPreviewMasked ? { visibility: 'hidden' } : {}) }}
                 aria-hidden={!leftPreviewVisible}
                 onScroll={handleLeftPreviewScroll}
                 onContextMenu={(e) => handlePreviewContextMenu(e, 'left')}
@@ -1951,7 +1958,7 @@ export function EditorArea() {
               key={`right-${rightTab?.id ?? 'none'}`}
               ref={rightPreviewRef}
               className={`${viewMode === 'dual-preview' ? 'min-w-0 flex-1' : 'hidden'} ${isFullscreen ? 'gm-fullscreen-preview-content py-6' : 'p-6'} ${isFullscreen && viewMode === 'dual-preview' ? 'gm-fullscreen-content-split-right' : ''} ${fullscreenTocExpanded && viewMode === 'dual-preview' ? `gm-fullscreen-toc-adjacent ${fullscreenTocWidthClass}` : ''} overflow-y-auto overflow-x-hidden select-text bg-gm-surface relative ${rightPaneDragOver ? 'ring-2 ring-inset ring-gm-primary/40' : ''}`}
-              style={rightPreviewMasked ? { visibility: 'hidden' } : undefined}
+              style={{ overflowAnchor: 'none', ...(rightPreviewMasked ? { visibility: 'hidden' } : {}) }}
               aria-hidden={viewMode !== 'dual-preview'}
               onScroll={handleRightPreviewScroll}
               onDragOver={handleRightPaneDragOver}
@@ -2065,71 +2072,6 @@ function getHeadingIdAtLine(toc: TocItem[], line: number): string | null {
   return activeId
 }
 
-interface PreviewLineAnchor {
-  line: number
-  endLine: number | undefined
-  top: number
-  height: number
-}
-
-interface PreviewAnchorCache {
-  version: number
-  clientWidth: number
-  scrollHeight: number
-  anchors: PreviewLineAnchor[]
-}
-
-function getVisiblePreviewAnchors(container: HTMLElement): PreviewLineAnchor[] {
-  const containerRect = container.getBoundingClientRect()
-  return Array.from(container.querySelectorAll<HTMLElement>('[data-md-line]'))
-    .map((element) => {
-      const line = Number(element.dataset.mdLine)
-      if (!Number.isFinite(line) || line < 1) return null
-      const endLine = Number(element.dataset.mdEndLine)
-      const rect = element.getBoundingClientRect()
-      const style = window.getComputedStyle(element)
-      if (
-        style.display === 'none'
-        || style.visibility === 'hidden'
-        || (rect.width === 0 && rect.height === 0)
-      ) {
-        return null
-      }
-      return {
-        line,
-        endLine: Number.isFinite(endLine) && endLine >= line ? endLine : undefined,
-        top: rect.top - containerRect.top + container.scrollTop,
-        height: rect.height,
-      }
-    })
-    .filter((item): item is PreviewLineAnchor => Boolean(item))
-    .sort((a, b) => a.top - b.top || a.line - b.line)
-}
-
-function getCachedPreviewAnchors(
-  container: HTMLElement,
-  version: number,
-  cache: WeakMap<HTMLElement, PreviewAnchorCache>
-): PreviewLineAnchor[] {
-  const cached = cache.get(container)
-  if (
-    cached?.version === version
-    && cached.clientWidth === container.clientWidth
-    && cached.scrollHeight === container.scrollHeight
-  ) {
-    return cached.anchors
-  }
-
-  const anchors = getVisiblePreviewAnchors(container)
-  cache.set(container, {
-    version,
-    clientWidth: container.clientWidth,
-    scrollHeight: container.scrollHeight,
-    anchors,
-  })
-  return anchors
-}
-
 function getPreviewTopForLine(
   container: HTMLElement,
   line: number,
@@ -2190,40 +2132,6 @@ function reportPreviewSwitchPerformance(tabId: string, restoreStartedAt: number)
     })
     performance.clearMarks(startMark)
   })
-}
-
-function getPreviewLineAtTop(
-  container: HTMLElement,
-  version: number,
-  cache: WeakMap<HTMLElement, PreviewAnchorCache>
-): number | undefined {
-  const anchors = getCachedPreviewAnchors(container, version, cache)
-  if (anchors.length === 0) return undefined
-
-  const targetTop = container.scrollTop + SCROLL_SYNC_TOP_OFFSET
-  let previous = anchors[0]
-  let next: PreviewLineAnchor | undefined
-  for (const anchor of anchors) {
-    if (anchor.top <= targetTop) {
-      previous = anchor
-      continue
-    }
-    next = anchor
-    break
-  }
-
-  if (previous.endLine && previous.endLine > previous.line && previous.height > 0) {
-    const progress = Math.max(0, Math.min(1, (targetTop - previous.top) / previous.height))
-    return Math.round(previous.line + (previous.endLine - previous.line) * progress)
-  }
-
-  if (next && next.line !== previous.line) {
-    const gap = Math.max(1, next.top - previous.top)
-    const progress = Math.max(0, Math.min(1, (targetTop - previous.top) / gap))
-    return Math.round(previous.line + (next.line - previous.line) * progress)
-  }
-
-  return previous.line
 }
 
 function getContentSignature(content: string) {
