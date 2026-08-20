@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import App from '@app-entry'
 import './styles/global.css'
-import './styles/startupShell.css'
 import { isTauri } from './hooks/useTauri'
 import { markStartupPoint } from './services/startupPerformance'
 

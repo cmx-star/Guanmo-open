@@ -4,6 +4,7 @@ import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 const indexHtml = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
+const startupShellCss = readFileSync(resolve(process.cwd(), 'src/styles/startupShell.css'), 'utf8')
 const startupThemeScript = indexHtml.match(
   /<script id="guanmo-startup-theme">([\s\S]*?)<\/script>/,
 )?.[1]
@@ -33,7 +34,7 @@ function resolveStartupTheme(
 function startupCanvas(themeId: string): string | undefined {
   const selector = themeId === 'warm' ? ':root' : `:root[data-theme-id='${themeId}']`
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return indexHtml.match(
+  return startupShellCss.match(
     new RegExp(`${escapedSelector}\\s*\\{[^}]*--gmss-canvas:\\s*([^;]+);`),
   )?.[1].trim()
 }

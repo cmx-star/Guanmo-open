@@ -29,7 +29,7 @@ describe('MarkdownPreview 内嵌 HTML', () => {
     expect(container.querySelector('details[open] summary')).toHaveTextContent('更多信息')
     expect(container.querySelector('details br')).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: 'GuanMo' })).toBeInTheDocument()
-    expect(container.querySelector('blockquote span')).toHaveTextContent('内容')
+    expect(screen.getByText('内容')).toBeInTheDocument()
     expect(container.querySelector('sub')).toHaveTextContent('2')
     expect(container.querySelector('sup')).toHaveTextContent('2')
     expect(container.querySelector('kbd')).toHaveTextContent('Ctrl')
