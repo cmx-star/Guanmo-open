@@ -337,6 +337,60 @@ export function findBlockIndexByLine(model: MarkdownPreviewModel, line: number):
   return -1
 }
 
+/* ------------------------- 页内锚点模型定位 ------------------------- */
+
+/** 页内锚点（hash 去掉 # 后的 id）在全文模型中的定位结果 */
+export interface PreviewAnchorTarget {
+  /** 目标所在源码行（1-based），供预览滚动定位 */
+  line: number
+  /** 命中方式：内部 heading-{line} 标识 / GitHub 风格标题 slug / HTML id 属性 */
+  kind: 'heading-line' | 'heading-slug' | 'html-id'
+}
+
+const HTML_ID_ATTRIBUTE_PATTERN = /(?<=^|\s)id\s*=\s*(?:"([^"]*)"|'([^']*)')/gi
+
+function countLineBreaks(value: string): number {
+  return (value.match(/\r\n|\r|\n/g) ?? []).length
+}
+
+/**
+ * 在全文模型中解析页内锚点目标，与目标 DOM 是否挂载无关。
+ * 优先级：
+ * 1. `heading-{line}`（extractToc / data-heading-id 同源的内部标识，需校验该行确为标题块起始行）；
+ * 2. 按文档顺序扫描渲染块：标题块先比对 model.toc 的 slug id（createHeadingId 去重语义），
+ *    再扫描块源码中的 HTML id 属性；code / mermaid / frontmatter 块不渲染 id，跳过。
+ * 未命中返回 null，调用方保持安全 no-op。
+ * 边界：纯文本书写的 `id="..."`（如讲解 HTML 的文档）可能被识别为锚点目标；
+ * 与阶段 1 的确定回退语义一致——只保证确定、可解释，不做 DOM 级精确判定。
+ */
+export function findAnchorTarget(model: MarkdownPreviewModel, id: string): PreviewAnchorTarget | null {
+  if (!id) return null
+
+  const internalLine = /^heading-(\d+)$/.exec(id)
+  if (internalLine) {
+    const line = Number(internalLine[1])
+    if (line >= 1 && model.blocks.some((block) => block.type === 'heading' && block.startLine === line)) {
+      return { line, kind: 'heading-line' }
+    }
+  }
+
+  const headingSlugByLine = new Map(model.toc.map((item) => [item.line, item.id]))
+  for (const block of model.blocks) {
+    if (block.type === 'code' || block.type === 'mermaid' || block.type === 'frontmatter') continue
+    if (block.type === 'heading' && headingSlugByLine.get(block.startLine) === id) {
+      return { line: block.startLine, kind: 'heading-slug' }
+    }
+    HTML_ID_ATTRIBUTE_PATTERN.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = HTML_ID_ATTRIBUTE_PATTERN.exec(block.rawSource)) !== null) {
+      if ((match[1] ?? match[2]) === id) {
+        return { line: block.startLine + countLineBreaks(block.rawSource.slice(0, match.index)), kind: 'html-id' }
+      }
+    }
+  }
+  return null
+}
+
 /** 基于全文文本搜索，返回命中列表（即使对应块尚未挂载也能定位） */
 export interface SearchHit {
   blockIndex: number

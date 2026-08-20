@@ -5,7 +5,7 @@ import { useEditorStore } from '@/stores/editorStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { AiShortcutMenuItems } from './AiShortcutMenuItems'
 import { useFileOperations } from '@/hooks/useFileOperations'
-import { useActiveHeading } from '@/hooks/useActiveHeading'
+import { useActiveHeading, type ActiveHeadingGeometry } from '@/hooks/useActiveHeading'
 import { saveFile, saveFileAs } from '@/services/fileSystem'
 import { scheduleMarkdownDocumentIndex } from '@/services/rag/indexer'
 import { extractToc, type TocItem } from '@/services/markdownToc'
@@ -725,17 +725,30 @@ export function EditorArea() {
     setActiveEditorHeading((current) => current === headingId ? current : headingId)
   }, [toc])
 
-  // 使用 IntersectionObserver 监听当前活跃的标题
-  // 传递 viewMode 作为 trigger，当模式切换时重新检查容器
+  // 目录当前项按"滚动位置之前最后一个标题"计算：由预览实例的全文行号映射
+  // （getLineForTop：模型 + 实测高度）驱动，不依赖标题 DOM 是否仍在虚拟窗口内，
+  // 长章节中标题块卸载后目录项不再变空；左右预览各自绑定自身的 handle 与 toc。
+  const resolveLeftActiveHeading = useCallback(({ scrollTop, viewportHeight }: ActiveHeadingGeometry): string | null => {
+    const handle = leftMarkdownPreviewRef.current
+    if (!handle) return null
+    return resolveActiveHeadingByScroll(handle, previewToc, scrollTop, viewportHeight)
+  }, [previewToc])
+
+  const resolveRightActiveHeading = useCallback(({ scrollTop, viewportHeight }: ActiveHeadingGeometry): string | null => {
+    const handle = rightMarkdownPreviewRef.current
+    if (!handle) return null
+    return resolveActiveHeadingByScroll(handle, rightToc, scrollTop, viewportHeight)
+  }, [rightToc])
+
   const activeHeading = useActiveHeading(
     leftPreviewRef,
-    '[data-heading-id]',
+    resolveLeftActiveHeading,
     `${viewMode}:${activeTab?.id ?? ''}:${activePreview.version}`,
     leftPreviewVisible
   )
   const activeRightHeading = useActiveHeading(
     rightPreviewRef,
-    '[data-heading-id]',
+    resolveRightActiveHeading,
     `${viewMode}:${rightTab?.id ?? ''}:${rightPreview.version}`,
     viewMode === 'dual-preview'
   )
@@ -2070,6 +2083,30 @@ function getHeadingIdAtLine(toc: TocItem[], line: number): string | null {
     activeId = item.id
   }
   return activeId
+}
+
+/**
+ * 滚动几何 → 活跃目录项：取"滚动位置之前最后一个标题"。
+ * 行号映射来自预览实例的全文模型 + 实测高度，与标题块是否挂载无关；
+ * 尚未越过任何标题时（文档顶部），回落到视口上半区可见的首个标题，
+ * 与原 IntersectionObserver（rootMargin -50%）的顶部行为保持一致。
+ */
+function resolveActiveHeadingByScroll(
+  handle: Pick<MarkdownPreviewHandle, 'getLineForTop'>,
+  toc: TocItem[],
+  scrollTop: number,
+  viewportHeight: number
+): string | null {
+  const topLine = handle.getLineForTop(scrollTop)
+  if (typeof topLine === 'number') {
+    const passed = getHeadingIdAtLine(toc, topLine)
+    if (passed) return passed
+  }
+  const halfLine = handle.getLineForTop(scrollTop + viewportHeight / 2)
+  if (typeof halfLine === 'number') {
+    return toc.find((item) => item.line <= halfLine)?.id ?? null
+  }
+  return null
 }
 
 function getPreviewTopForLine(

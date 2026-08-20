@@ -11,7 +11,7 @@ import { isTauri } from '@/hooks/useTauri'
 import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { createMarkdownPreviewModel, computeVisibleRange, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
+import { createMarkdownPreviewModel, computeVisibleRange, findAnchorTarget, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
 import {
   buildDocumentRangeInfo,
   buildDomRangesForSourceRange,
@@ -320,6 +320,8 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   // Virtual scrolling state
   const scrollContainerRef = useRef<HTMLElement | null>(null)
   const measuredHeightsRef = useRef<Map<string, number>>(new Map())
+  /** 未挂载目标的行定位校正任务：目标块挂载测量后执行一次即清空（幂等，无反馈循环） */
+  const pendingLineCorrectionRef = useRef<{ line: number } | null>(null)
   const blockRefs = useRef<Map<number, HTMLDivElement | null>>(new Map())
   const blockResizeObserverRef = useRef<ResizeObserver | null>(null)
   const measurementKeyRef = useRef<{
@@ -346,6 +348,9 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   const selectionRangeRef = useRef<{ from: number; to: number } | null>(null)
   const selectionAnchorRef = useRef<number | null>(null)
   const dragStateRef = useRef<PreviewDragSelection | null>(null)
+  /** 受支持交互 HTML（details 展开/折叠）的瞬时状态：块 ID + 块内序号 → 用户态；仅存本组件实例 ref，不写 Tab、不持久化 */
+  const interactiveHtmlStateRef = useRef<Map<string, boolean>>(new Map())
+  const interactiveStateKeyRef = useRef<string | null>(null)
 
   const measurementKey = measurementKeyRef.current
   if (
@@ -359,6 +364,14 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   ) {
     measuredHeightsRef.current = new Map()
     measurementKeyRef.current = { content: displayedContent, fontSize, lineHeight, fontFamily, wordWrap, theme: themeId }
+  }
+
+  // 交互 HTML 瞬时状态失效：文档内容或文档身份变化即整体清除（渲染期执行，
+  // 早于本帧块挂载 ref callback，避免"先恢复旧状态、又被清空"的时序倒置）
+  const interactiveStateKey = `${documentKey ?? ''}\u0000${displayedContent}`
+  if (interactiveStateKeyRef.current !== interactiveStateKey) {
+    interactiveStateKeyRef.current = interactiveStateKey
+    interactiveHtmlStateRef.current.clear()
   }
 
   activeEditRef.current = activeEdit
@@ -499,6 +512,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   // 文档内容变化：旧 offset 全部失效，清除搜索索引与选区状态
   useEffect(() => {
+    pendingLineCorrectionRef.current = null
     searchMatchesByBlockRef.current = null
     const hadSearch = searchStateRef.current !== null
     const hadSelection = selectionRangeRef.current !== null
@@ -604,6 +618,18 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     }
   }, [fontSize, lineHeight, model, remeasureMountedBlocks])
 
+  /** 虚拟块（重新）挂载时恢复 details 展开/折叠等受支持交互 HTML 的用户瞬时状态 */
+  const restoreInteractiveHtmlState = useCallback((element: HTMLElement) => {
+    const state = interactiveHtmlStateRef.current
+    if (state.size === 0) return
+    const blockKey = element.dataset.mdBlockKey
+    if (!blockKey) return
+    element.querySelectorAll('details').forEach((details, index) => {
+      const open = state.get(`${blockKey}#${index}`)
+      if (open !== undefined) details.open = open
+    })
+  }, [])
+
   const setBlockElement = useCallback((index: number, element: HTMLDivElement | null) => {
     const previous = blockRefs.current.get(index)
     if (previous && previous !== element) {
@@ -617,16 +643,59 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       blockResizeObserverRef.current?.observe(element)
       // 块（重新）挂载：根据当前搜索/选区状态自动恢复高亮
       syncBlockHighlights(index, element)
+      restoreInteractiveHtmlState(element)
     } else {
       blockRefs.current.delete(index)
     }
-  }, [resource, syncBlockHighlights])
+  }, [resource, syncBlockHighlights, restoreInteractiveHtmlState])
+
+  // details 的 toggle 事件不冒泡，在捕获阶段委托监听；状态仅写入本实例 ref，
+  // 块卸载不丢失，重挂载由 restoreInteractiveHtmlState 恢复
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const handleToggle = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof HTMLDetailsElement)) return
+      const blockWrapper = target.closest<HTMLElement>('[data-md-block-key]')
+      const blockKey = blockWrapper?.dataset.mdBlockKey
+      if (!blockWrapper || !blockKey) return
+      let index = -1
+      blockWrapper.querySelectorAll('details').forEach((details, i) => {
+        if (details === target) index = i
+      })
+      if (index < 0) return
+      interactiveHtmlStateRef.current.set(`${blockKey}#${index}`, target.open)
+    }
+    root.addEventListener('toggle', handleToggle, true)
+    return () => root.removeEventListener('toggle', handleToggle, true)
+  }, [])
 
   // Height estimation
   const estimateBlockHeight = useCallback(
     (block: PreviewBlock): number => estimatePreviewBlockHeight(block, fontSize, lineHeight),
     [fontSize, lineHeight],
   )
+
+  // 模型驱动行定位：目标已挂载按实测位置平滑滚动；目标未挂载（虚拟窗口外）先按
+  // 全文模型估算即时定位，目标进入虚拟窗口并完成测量后由下方 layout effect 执行
+  // 最多一次幂等校正。目录点击与页内锚点共享该路径，不建立第二套滚动状态。
+  const scrollToLineInternal = useCallback((line: number): boolean => {
+    const container = scrollContainerRef.current
+    if (!container) return false
+    const target = rootRef.current?.querySelector<HTMLElement>(`[data-md-line="${line}"]`)
+    if (target) {
+      const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      pendingLineCorrectionRef.current = null
+      container.scrollTo({ top: Math.max(0, top - 24), behavior: 'smooth' })
+      return true
+    }
+    const top = getEstimatedPreviewTopForLine(model, line, estimateBlockHeight, measuredHeightsRef.current)
+    if (typeof top !== 'number') return false
+    pendingLineCorrectionRef.current = { line }
+    container.scrollTo({ top: Math.max(0, top - 24) })
+    return true
+  }, [model, estimateBlockHeight])
 
   // Expose scrollToLine for EditorArea to use with TOC jumps
   useImperativeHandle(ref, () => ({
@@ -646,15 +715,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       )
     },
     scrollToLine(line: number) {
-      const container = scrollContainerRef.current
-      if (!container) return
-      const target = rootRef.current?.querySelector<HTMLElement>(`[data-md-line="${line}"]`)
-      const top = target
-        ? target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
-        : getEstimatedPreviewTopForLine(model, line, estimateBlockHeight, measuredHeightsRef.current)
-      if (typeof top === 'number') {
-        container.scrollTo({ top: Math.max(0, top - 24), behavior: 'smooth' })
-      }
+      scrollToLineInternal(line)
     },
     scrollToOffset(offset: number) {
       const index = findBlockIndexByOffset(model, offset)
@@ -698,7 +759,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       selectionAnchorRef.current = null
       applySelection(null)
     },
-  }), [model, estimateBlockHeight, setSearchStateImpl, applySelection])
+  }), [model, estimateBlockHeight, scrollToLineInternal, setSearchStateImpl, applySelection])
 
   // Visible range
   const visible = useMemo(
@@ -755,8 +816,28 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     })
   }, [visible.startIndex, visible.endIndex, model, estimateBlockHeight])
 
+  // 未挂载目标的单次幂等校正：目标块挂载并完成测量（上方 measure effect 已执行）后，
+  // 按实测位置精确对齐一次；pending 读取即清空，后续渲染直接返回，不形成滚动反馈循环。
+  useLayoutEffect(() => {
+    const pending = pendingLineCorrectionRef.current
+    if (!pending) return
+    const container = scrollContainerRef.current
+    if (!container) return
+    const target = rootRef.current?.querySelector<HTMLElement>(`[data-md-line="${pending.line}"]`)
+    if (!target) return
+    pendingLineCorrectionRef.current = null
+    const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    const desired = Math.max(0, top - 24)
+    if (Math.abs(container.scrollTop - desired) >= 1) {
+      container.scrollTop = desired
+    }
+  })
+
   const overlayRectRef = useRef<{ top: number; left: number; width: number } | null>(null)
 
+  // 编辑标记与浮层定位：除 activeEdit 变化外，虚拟挂载窗口变化也需重跑——
+  // 编辑中的块滚出 overscan 卸载再滚回重挂载后，新 DOM 需要恢复 data-md-editing
+  // （否则原正文重新显示，与仍存在的编辑浮层形成双层内容）并按新位置重算浮层矩形
   useLayoutEffect(() => {
     if (!activeEdit) return
     const target = rootRef.current?.querySelector<HTMLElement>(
@@ -778,7 +859,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     if (prev && prev.top === next.top && prev.left === next.left && prev.width === next.width) return
     overlayRectRef.current = next
     setOverlayRect(next)
-  }, [activeEdit])
+  }, [activeEdit, visible.startIndex, visible.endIndex])
 
   const closeActiveEdit = useCallback((edit: ActiveBlockEdit) => {
     if (!mountedRef.current) return
@@ -1148,8 +1229,10 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       if (!href?.startsWith('#')) return
       event.preventDefault()
       const id = href.slice(1)
-      const scope = event.currentTarget.closest('.prose')
+      // 仅在预览实例自身范围内查找已挂载目标；不回退 document.getElementById，
+      // 避免双栏预览等实例间同 id（如 heading-N）造成的跨实例滚动串扰
       let target: HTMLElement | null | undefined
+      let navigated = false
       if (isFootnoteBackref) {
         const footnoteItem = event.currentTarget.closest('li[id]')
         const footnoteItems = footnoteItem?.closest('section[data-footnotes]')?.querySelectorAll('li[id]')
@@ -1167,16 +1250,22 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
           : undefined
         if (container && typeof top === 'number') {
           container.scrollTo({ top: Math.max(0, top - 24), behavior: 'smooth' })
+          navigated = true
+        }
+      } else {
+        target ??= rootRef.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)
+        if (target instanceof HTMLElement) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          target.focus({ preventScroll: true })
+          navigated = true
+        } else {
+          // 模型驱动回退：目标未挂载（虚拟窗口外）或为标题 slug / HTML id 锚点时按全文模型定位
+          const anchorTarget = findAnchorTarget(model, id)
+          navigated = anchorTarget ? scrollToLineInternal(anchorTarget.line) : false
         }
       }
-      if (!isFootnoteBackref) {
-        target ??= scope?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)
-        target ??= document.getElementById(id)
-      }
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      if (target instanceof HTMLElement) {
-        target.focus({ preventScroll: true })
-      }
+      // 锚点不存在：安全 no-op——不修改滚动位置，也不更新 URL hash
+      if (!navigated) return
       if (typeof history !== 'undefined' && history.replaceState) {
         history.replaceState(null, '', href)
       }
@@ -1428,7 +1517,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
             )
           },
         }
-  }, [estimateBlockHeight, filePath, fontSize, footnoteReferences, model, onHeadingClick, onTaskToggle])
+  }, [estimateBlockHeight, filePath, fontSize, footnoteReferences, model, onHeadingClick, onTaskToggle, scrollToLineInternal])
 
   return (
     <div
