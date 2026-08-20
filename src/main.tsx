@@ -35,6 +35,7 @@ async function bootstrap() {
     // 在窗口可见前测量到 0 尺寸（生产构建下时序竞争导致正文空白、无语法高亮、无法滚动）。
     try {
       await getCurrentWindow().show()
+      markStartupPoint('window-shown')
     } catch (error) {
       console.error('[Startup] Failed to show main window:', error)
     }

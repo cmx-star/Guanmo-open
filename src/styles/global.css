@@ -1667,7 +1667,9 @@ body {
   min-width: 0;
 }
 
-.gm-markdown-block[data-md-editing] > * {
+/* data-md-editing 由 MarkdownPreview 在进入块编辑时写入块容器（整篇渲染的 .gm-markdown-block
+   与虚拟化块的外层 div 均覆盖），隐藏原预览正文，避免与编辑浮层形成双层内容 */
+[data-md-editing] > * {
   visibility: hidden;
   pointer-events: none;
 }

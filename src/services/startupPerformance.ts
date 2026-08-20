@@ -1,4 +1,5 @@
 import { eventMarker, type PerfEventType } from '@/services/eventMarker'
+import { isTauri } from '@/hooks/useTauri'
 
 export type StartupPerformancePoint =
   | 'frontend-bootstrap'
@@ -25,6 +26,7 @@ export type StartupPerformancePoint =
   | 'startup-shell-removed'
   | 'first-animation-frame'
   | 'startup-session-restore-complete'
+  | 'window-shown'
 
 const MARK_PREFIX = 'guanmo:startup:'
 const completedPoints = new Set<StartupPerformancePoint>()
@@ -48,6 +50,21 @@ export function markStartupPoint(
   for (const resolve of pointWaiters.get(point) ?? []) resolve()
   pointWaiters.delete(point)
 
+  // Release 冷启动埋点：满足触发条件后调度一次性冲刷（详见下方 Release 埋点说明）。
+  if (
+    point === 'startup-session-restore-complete' ||
+    point === 'active-document-first-visible' ||
+    point === 'app-ready'
+  ) {
+    scheduleReleaseMetricsFlushWhenSettled()
+  }
+  if (point === 'app-ready') {
+    scheduleReleaseMetricsFlush(METRICS_FLUSH_APP_READY_FALLBACK_MS)
+  }
+  if (point === 'app-shell-interactive') {
+    scheduleReleaseMetricsFlush(METRICS_FLUSH_SAFETY_NET_MS)
+  }
+
   if (typeof performance === 'undefined') return
   const markName = `${MARK_PREFIX}${point}`
   if (performance.getEntriesByName(markName, 'mark').length === 0) {
@@ -57,6 +74,94 @@ export function markStartupPoint(
     // 新增点位不在 PerfEventType 中：Extract 保证仅对既有兼容点位通过类型收窄
     eventMarker.mark(point as Extract<StartupPerformancePoint, PerfEventType>, metadata)
     if (point === 'app-ready') scheduleStartupTimelineReport()
+  }
+}
+
+// ==================== Release 冷启动埋点（startup-metrics feature 构建启用）====================
+//
+// 前端不做任何运行期主动采样：全部点位复用既有 performance.mark 缓冲与浏览器
+// paint timing，启动完成后一次性发送给 Rust（单次 IPC），由 Rust 合并 T0/T1/T2
+// 并追加写入 JSONL。时间基准统一为 Unix epoch 毫秒：
+// performance.timeOrigin + entry.startTime。
+//
+// 正式版本（未启用 feature）中 Rust 端 record_startup_metrics 为空实现，
+// 该单次 IPC 数据被静默丢弃，不产生文件写入；Web 构建不调度任何定时器。
+
+/** T 点位 → 既有 performance.mark 点名（不含前缀）。T6 由 paint timing 单独提供。 */
+const RELEASE_METRIC_MARKS: Readonly<Record<string, string>> = {
+  T4_HTML_START: 'html-start',
+  T5_DOM_READY: 'startup-shell-dom-ready',
+  T7_MAIN_TS_START: 'main-module-evaluated',
+  T8_REACT_RENDER_START: 'react-render-start',
+  T9_APP_MOUNTED: 'react-mounted',
+  T10_MAIN_UI_PAINT: 'app-shell-first-visible',
+  T11_WINDOW_SHOW: 'window-shown',
+  T12_SESSION_RESTORED: 'startup-session-restore-complete',
+  T13_DOCUMENT_VISIBLE: 'active-document-first-visible',
+}
+
+const METRICS_FLUSH_SETTLED_DELAY_MS = 1500
+const METRICS_FLUSH_APP_READY_FALLBACK_MS = 15000
+const METRICS_FLUSH_SAFETY_NET_MS = 30000
+
+let releaseMetricsFlushed = false
+let releaseMetricsSettledHookArmed = false
+
+function scheduleReleaseMetricsFlush(delayMs: number): void {
+  if (releaseMetricsFlushed || !isTauri()) return
+  setTimeout(() => {
+    void flushReleaseMetrics()
+  }, delayMs)
+}
+
+/**
+ * T12 与 T13 均完成后再冲刷：启动快照可能让 T13 先于 T12 出现，
+ * 任一先到时挂等待，避免冲刷过早漏掉后完成的点位。
+ * 两个点位均未到达时由 app-ready 兜底与 app-shell-interactive 安全网覆盖。
+ */
+function scheduleReleaseMetricsFlushWhenSettled(): void {
+  if (releaseMetricsSettledHookArmed) return
+  releaseMetricsSettledHookArmed = true
+  void Promise.all([
+    waitForStartupPoint('startup-session-restore-complete'),
+    waitForStartupPoint('active-document-first-visible'),
+  ]).then(() => scheduleReleaseMetricsFlush(METRICS_FLUSH_SETTLED_DELAY_MS))
+}
+
+async function flushReleaseMetrics(): Promise<void> {
+  if (releaseMetricsFlushed) return
+  releaseMetricsFlushed = true
+  if (!isTauri() || typeof performance === 'undefined') return
+
+  const markStarts = new Map<string, number>()
+  for (const entry of performance.getEntriesByType('mark')) {
+    if (!entry.name.startsWith(MARK_PREFIX)) continue
+    const point = entry.name.slice(MARK_PREFIX.length)
+    if (!markStarts.has(point)) markStarts.set(point, entry.startTime)
+  }
+
+  const points: Record<string, number> = {}
+  for (const [metricPoint, markName] of Object.entries(RELEASE_METRIC_MARKS)) {
+    const startTime = markStarts.get(markName)
+    if (startTime !== undefined) {
+      points[metricPoint] = Math.round(performance.timeOrigin + startTime)
+    }
+  }
+  // T6_SKELETON_PAINT：浏览器首帧绘制（此刻唯一可见内容为静态骨架屏）。
+  // visible:false 冷启动策略下首帧可能推迟到窗口显示（T11）之后，如实记录。
+  const firstPaint = performance
+    .getEntriesByType('paint')
+    .find((entry) => entry.name === 'first-paint')
+  if (firstPaint) {
+    points.T6_SKELETON_PAINT = Math.round(performance.timeOrigin + firstPaint.startTime)
+  }
+
+  const payload = { points, recordedAt: new Date().toISOString() }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('record_startup_metrics', { payload })
+  } catch (error) {
+    console.debug('[Startup] record_startup_metrics rejected:', error)
   }
 }
 
@@ -72,6 +177,7 @@ const STARTUP_TIMELINE_SEMANTICS: ReadonlyArray<{ point: string; semantic: strin
   { point: 'react-render-start', semantic: '调用 root.render 之前' },
   { point: 'react-mounted', semantic: 'React 首次真实 DOM commit 完成' },
   { point: 'startup-shell-removed', semantic: '静态 Shell 已被 React 接管移除' },
+  { point: 'window-shown', semantic: '主窗口 show() 完成（visible:false 冷启动的显示点）' },
   { point: 'first-react-render', semantic: 'App 组件首次渲染执行' },
   { point: 'first-animation-frame', semantic: '首个 RAF callback 到达（不代表交互就绪）' },
   { point: 'app-shell-first-visible', semantic: '真实 AppShell 首次可见' },

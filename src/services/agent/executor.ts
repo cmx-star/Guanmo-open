@@ -558,7 +558,9 @@ async function executeTool(
     }
     if (isPendingEditResult(result) || isPendingActionResult(result)) return { result, rawResult: result, status: 'success' }
     return {
-      result: name === 'read_selection_context' ? result : truncate(result, getToolTokenBudget(name)),
+      // search_knowledge 必须走结构化截断：observation 的 content 会被时间线
+      // 与来源提取用 JSON.parse 解析，硬截断会破坏 JSON 导致误报"检索失败"。
+      result: name === 'read_selection_context' ? result : truncateToolResultForModel(name, result, getToolTokenBudget(name)),
       rawResult: result,
       status: 'success',
     }

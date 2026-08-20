@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AiProvider, ChatRequest, ChatResponse, StreamChunk } from '@/services/ai/types'
+import { decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '@/services/agent/session'
 
 const responseQueue: StreamChunk[][] = []
 const streamChat = vi.fn(async function* (_request: ChatRequest) {
@@ -180,6 +181,49 @@ describe('Agent execution budget', () => {
     expect(result.sources).toHaveLength(includedSources.length)
     expect(result.sources.map((source) => source.kind === 'web' ? source.url : source.filePath))
       .toEqual(includedSources.map((source) => source.filePath))
+  })
+
+  it('超长知识库结果的 observation 保持合法 JSON，时间线不误报检索失败', async () => {
+    const results = Array.from({ length: 8 }, (_, index) => ({
+      filePath: `D:\\anonymous\\long-${index + 1}.md`,
+      title: `匿名长来源 ${index + 1}`,
+      chunkId: `chunk-${index + 1}`,
+      snippet: `匿名证据 ${index + 1}：${'内容'.repeat(400)}`,
+      titlePath: [],
+      startLine: index * 10 + 1,
+      endLine: index * 10 + 9,
+    }))
+    registerTool({
+      name: 'search_knowledge',
+      description: '匿名知识库检索',
+      parameters: [],
+      execute: vi.fn(async () => JSON.stringify({ status: 'ok', resultCount: results.length, results }, null, 2)),
+    })
+    responseQueue.push(
+      [{
+        content: '',
+        done: true,
+        toolCallDeltas: [{ index: 0, name: 'search_knowledge', arguments: '{}' }],
+      }],
+      [{ content: '匿名长知识库答案', done: true }],
+    )
+
+    const result = await runAgent({
+      query: '匿名长知识库问题',
+      candidateToolNames: ['search_knowledge'],
+      contextWindowTokens: 8192,
+      streamEnabled: true,
+    })
+
+    const observation = result.steps.find(
+      (step) => step.type === 'observation' && step.toolName === 'search_knowledge',
+    )
+    expect(observation).toBeDefined()
+    const parsed = JSON.parse(observation!.content) as { status: string; results: unknown[] }
+    expect(parsed.status).toBe('ok')
+    expect(parsed.results.length).toBeGreaterThan(0)
+    expect(parsed.results.length).toBeLessThan(results.length)
+    expect(decodeKnowledgeSearchOutcome(decodeAgentStepEvent(observation!))).toBe('found')
   })
 
   it('为同批次的每个工具分别发送执行阶段事件', async () => {

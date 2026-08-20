@@ -66,6 +66,11 @@ export function buildMarkdownEditorTheme(fontSize: number, lineHeight: number, f
       color: 'var(--gm-text-tertiary)',
       border: 'none',
       borderRight: '1px solid var(--gm-border)',
+      // Limit gutter width to avoid excessive padding when line numbers or fold gutters grow.
+      // CodeMirror measures the actual gutter width and we expose it as --gm-cm-gutter-width;
+      // this CSS ensures the visual gutter cannot become unusually wide.
+      minWidth: '44px',
+      maxWidth: '88px',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'transparent',

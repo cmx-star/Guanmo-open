@@ -927,7 +927,7 @@ export function registerBuiltinTools() {
     description: '提出创建一次性阅读提醒的行动提案。只生成确认卡，用户确认后才注册提醒。',
     parameters: [
       { name: 'title', type: 'string', description: '提醒标题', required: true },
-      { name: 'description', type: 'string', description: '提醒说明', required: false },
+      { name: 'description', type: 'string', description: '提醒内容：用简短、自然、有人情味的口语直接对用户说，例如“该去吃饭了~”；不要写“3分钟后提醒用户吃饭”或其他系统播报式的时间说明，提醒时间单独由 dueAt 表示', required: false },
       { name: 'dueAt', type: 'string', description: '明确的未来 ISO 日期时间；无偏移时使用电脑时区', required: true },
       { name: 'timezone', type: 'string', description: '可选创建时区，例如 Asia/Shanghai；默认电脑时区', required: false },
       { name: 'sourceMessageId', type: 'string', description: '可选的来源助手消息 ID；确认时会重新校验', required: false },
