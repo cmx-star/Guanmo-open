@@ -1478,6 +1478,13 @@ body {
   height: auto;
 }
 
+.gm-markdown-inline-svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
 .gm-markdown-preview {
   color: var(--gm-text);
 }

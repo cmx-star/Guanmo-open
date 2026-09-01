@@ -10,6 +10,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { isTauri } from '@/hooks/useTauri'
 import { createHeadingId, type TocItem } from '@/services/markdownToc'
 import { remarkStandaloneDisplayMath } from '@/services/markdownMath'
+import { MARKDOWN_HTML_REHYPE_PLUGINS } from '@/services/markdownHtml'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { createMarkdownPreviewModel, computeVisibleRange, findAnchorTarget, findBlockIndexByOffset, getEstimatedPreviewLineForTop, getEstimatedPreviewTopForLine, getSourceOffsetForLine, searchVisibleText, type PreviewBlock } from '@/services/markdownPreviewModel'
 import {
@@ -29,20 +30,11 @@ const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath, remarkStandaloneDisplayM
 const MARKDOWN_REHYPE_PLUGINS = [rehypeKatex, rehypeHighlight]
 const EMBEDDED_HTML_PATTERN = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\s*\/?>/
 const HTML_VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
-type RehypePlugins = NonNullable<Options['rehypePlugins']>
-let markdownHtmlPluginsPromise: Promise<RehypePlugins> | null = null
-
 const BlockLineBaseContext = createContext<number>(0)
 const FootnoteSectionContext = createContext(true)
 const FootnoteReferenceSuffixContext = createContext<string | null>(null)
 function useBlockLineBase(): number {
   return useContext(BlockLineBaseContext)
-}
-
-function loadMarkdownHtmlPlugins(): Promise<RehypePlugins> {
-  markdownHtmlPluginsPromise ??= import('@/services/markdownHtml')
-    .then(({ MARKDOWN_HTML_REHYPE_PLUGINS }) => MARKDOWN_HTML_REHYPE_PLUGINS)
-  return markdownHtmlPluginsPromise
 }
 
 function hasCrossBlockHtml(content: string): boolean {
@@ -286,6 +278,10 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   const displayedContent = activeEdit?.contentSnapshot ?? optimisticContent?.content ?? content
   const model = useMemo(() => createMarkdownPreviewModel(displayedContent), [displayedContent])
   const normalizedContent = model.normalizedContent
+  const previewContent = useMemo(
+    () => normalizeSvgHtmlBlocks(normalizedContent),
+    [normalizedContent],
+  )
   const referenceDefinitionSource = useMemo(
     () => model.definitions.map((definition) => definition.rawSource).join('\n'),
     [model.definitions],
@@ -314,9 +310,8 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
     if (!footnoteDefinitionSource || footnoteReferences.length === 0) return ''
     return `${footnoteReferences.map((reference) => reference.source).join(' ')}\n\n${footnoteDefinitionSource}`
   }, [footnoteDefinitionSource, footnoteReferences])
-  const hasEmbeddedHtml = useMemo(() => EMBEDDED_HTML_PATTERN.test(normalizedContent), [normalizedContent])
-  const requiresWholeDocumentRender = hasCrossBlockHtml(normalizedContent)
-  const [htmlRehypePlugins, setHtmlRehypePlugins] = useState<RehypePlugins | null>(null)
+  const hasEmbeddedHtml = useMemo(() => EMBEDDED_HTML_PATTERN.test(previewContent), [previewContent])
+  const requiresWholeDocumentRender = hasCrossBlockHtml(previewContent) || /<svg\b/i.test(previewContent)
   const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null)
   const themeId = useSettingsStore((state) => state.appearance.themeId)
   // Virtual scrolling state
@@ -384,21 +379,6 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   useEffect(() => {
     onDraftStateChange?.(activeEdit !== null)
   }, [activeEdit, onDraftStateChange])
-
-  useEffect(() => {
-    if (skipHtml || !hasEmbeddedHtml || htmlRehypePlugins) return
-    let active = true
-    void loadMarkdownHtmlPlugins()
-      .then((plugins) => {
-        if (active) setHtmlRehypePlugins(plugins)
-      })
-      .catch(() => {
-        // 加载失败时继续跳过原始 HTML，避免退回未过滤渲染。
-      })
-    return () => {
-      active = false
-    }
-  }, [hasEmbeddedHtml, htmlRehypePlugins, skipHtml])
 
   useEffect(() => {
     const lifecycleMetadata = lifecycleMetadataRef.current
@@ -1256,10 +1236,10 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
 
   const rehypePlugins = useMemo(
     () => [
-      ...(!skipHtml && hasEmbeddedHtml && htmlRehypePlugins ? htmlRehypePlugins : []),
+      ...(!skipHtml && hasEmbeddedHtml ? MARKDOWN_HTML_REHYPE_PLUGINS : []),
       ...MARKDOWN_REHYPE_PLUGINS,
     ],
-    [hasEmbeddedHtml, htmlRehypePlugins, skipHtml],
+    [hasEmbeddedHtml, skipHtml],
   )
   const wholeDocumentRehypePlugins = useMemo(
     () => [...rehypePlugins, createSourceOffsetAnnotator(0), createMarkdownBlockWrapperPlugin(model.blocks)],
@@ -1528,6 +1508,11 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
               </button>
             )
           },
+          svg: ({ children, className, node: _node, ...props }) => (
+            <svg {...props} className={['gm-markdown-inline-svg', className].filter(Boolean).join(' ')}>
+              {children}
+            </svg>
+          ),
           del: ({ children }) => (
             <del className="text-gm-text-tertiary line-through">{children}</del>
           ),
@@ -1576,8 +1561,8 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
       {requiresWholeDocumentRender ? (
         <StableMarkdownContent
           baseLine={0}
-          markdown={normalizedContent}
-          skipHtml={skipHtml || (hasEmbeddedHtml && !htmlRehypePlugins)}
+          markdown={previewContent}
+          skipHtml={skipHtml}
           rehypePlugins={wholeDocumentRehypePlugins}
           components={components}
         />
@@ -1600,7 +1585,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
                 renderFootnoteSection={false}
                 footnoteReferenceSuffix={`block-${globalIndex}`}
                 markdown={`${isFootnoteDefinition ? '' : normalizedContent.slice(block.normalizedStartOffset, block.normalizedEndOffset)}${referenceDefinitionSource ? `\n\n${referenceDefinitionSource}` : ''}${footnoteContext ? `\n\n${footnoteContext}` : ''}`}
-                skipHtml={skipHtml || (hasEmbeddedHtml && !htmlRehypePlugins)}
+                skipHtml={skipHtml}
                 rehypePlugins={rehypePlugins}
                 components={components}
               />
@@ -1615,7 +1600,7 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
             renderFootnoteSection={true}
             footnoteReferenceSuffix="footnote-section"
             markdown={standaloneFootnoteMarkdown}
-            skipHtml={skipHtml || (hasEmbeddedHtml && !htmlRehypePlugins)}
+            skipHtml={skipHtml}
             rehypePlugins={rehypePlugins}
             components={components}
           />
@@ -1811,6 +1796,36 @@ function resolveImageSrc(src: string | undefined, filePath?: string | null): str
     ? normalizedSrc
     : joinPreviewPath(dirnamePreviewPath(filePath), normalizedSrc)
   return convertFileSrc(absolutePath)
+}
+
+/**
+ * CommonMark 会在 SVG 内的空白行处结束原始 HTML 块，导致后续节点脱离 `<svg>`。
+ * 用同一行上的空注释维持 HTML 块连续性，不改变文档行号或 SVG 的可见结果。
+ */
+function normalizeSvgHtmlBlocks(content: string): string {
+  const parts = content.split(/(\r?\n)/)
+  let activeFence: { marker: '`' | '~'; length: number } | null = null
+  let insideSvg = false
+
+  for (let index = 0; index < parts.length; index += 2) {
+    let line = parts[index]
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (activeFence) {
+      if (fence && fence[1][0] === activeFence.marker && fence[1].length >= activeFence.length) activeFence = null
+      continue
+    }
+    if (fence) {
+      activeFence = { marker: fence[1][0] as '`' | '~', length: fence[1].length }
+      continue
+    }
+
+    if (!insideSvg && /<svg\b/i.test(line)) insideSvg = true
+    if (insideSvg && /^[\t ]*$/.test(line)) line = '<!-- -->'
+    parts[index] = line
+    if (insideSvg && /<\/svg\s*>/i.test(line)) insideSvg = false
+  }
+
+  return parts.join('')
 }
 
 function decodeLocalImagePath(path: string): string {

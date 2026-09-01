@@ -132,11 +132,11 @@ interface AnnotatableHastNode {
 export function createSourceOffsetAnnotator(baseOffset: number) {
   return function annotator() {
     return function transform(tree: AnnotatableHastNode) {
-      const visit = (node: AnnotatableHastNode): void => {
+      const visit = (node: AnnotatableHastNode, insideSvg = false): void => {
         if (!node.children || node.children.length === 0) return
         for (let i = 0; i < node.children.length; i += 1) {
           const child = node.children[i]
-          if (child.type === 'text' && typeof child.value === 'string' && child.value) {
+          if (!insideSvg && child.type === 'text' && typeof child.value === 'string' && child.value) {
             const from = child.position?.start?.offset
             const to = child.position?.end?.offset
             if (typeof from !== 'number' || typeof to !== 'number') continue
@@ -150,7 +150,7 @@ export function createSourceOffsetAnnotator(baseOffset: number) {
               children: [child],
             }
           } else {
-            visit(child)
+            visit(child, insideSvg || child.tagName === 'svg')
           }
         }
       }
