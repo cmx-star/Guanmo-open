@@ -1,6 +1,7 @@
 import { toast } from '@/services/toast'
 import type { PersistedTabRestoreIssue } from '@/services/sessionRestore'
 import { useEditorStore } from '@/stores/editorStore'
+import { MAX_SUPPORTED_MARKDOWN_FILE_SIZE_LABEL } from '@/services/fileSizeLimit'
 
 export function showSessionRestoreIssues(issues: PersistedTabRestoreIssue[]): void {
   const unavailable = issues.filter((issue) => issue.kind === 'unavailable')
@@ -11,6 +12,20 @@ export function showSessionRestoreIssues(issues: PersistedTabRestoreIssue[]): vo
     toast.show({
       id: 'session-restore-unavailable',
       title: '文件恢复不完整',
+      message,
+      type: 'warning',
+      duration: null,
+    })
+  }
+
+  const tooLarge = issues.filter((issue) => issue.kind === 'too-large')
+  if (tooLarge.length > 0) {
+    const message = tooLarge.length === 1
+      ? `「${tooLarge[0].title}」超过 ${MAX_SUPPORTED_MARKDOWN_FILE_SIZE_LABEL}，未读取磁盘内容；标签已保留。`
+      : `${tooLarge.length} 个文件超过 ${MAX_SUPPORTED_MARKDOWN_FILE_SIZE_LABEL}，未读取磁盘内容；标签已保留。`
+    toast.show({
+      id: 'session-restore-too-large',
+      title: '文件未恢复',
       message,
       type: 'warning',
       duration: null,

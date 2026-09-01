@@ -85,6 +85,7 @@ struct LegacyFileAccessMigrationResult {
 #[derive(Clone, Copy, Debug)]
 enum FileAction {
     ReadText,
+    ReadMetadata,
     WriteText,
     ReadBinary,
     WriteBinary,
@@ -956,6 +957,16 @@ fn read_text_file_by_path(app: tauri::AppHandle, path: String) -> Result<String,
 }
 
 #[tauri::command]
+fn get_text_file_size_by_path(app: tauri::AppHandle, path: String) -> Result<u64, String> {
+    let state = app.state::<FsAccessState>();
+    let path =
+        ensure_allowed_existing_text_file(&state, &PathBuf::from(path), FileAction::ReadMetadata)?;
+    fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn write_text_file_by_path(
     app: tauri::AppHandle,
     path: String,
@@ -1074,6 +1085,7 @@ mod tests {
         let path = Path::new("outside/secret.md");
         let actions = [
             FileAction::ReadText,
+            FileAction::ReadMetadata,
             FileAction::WriteText,
             FileAction::ReadBinary,
             FileAction::WriteBinary,
@@ -1103,6 +1115,7 @@ mod tests {
         let path = Path::new("workspace/notes/draft.md");
         let actions = [
             FileAction::ReadText,
+            FileAction::ReadMetadata,
             FileAction::WriteText,
             FileAction::ReadBinary,
             FileAction::WriteBinary,
@@ -1473,6 +1486,7 @@ pub fn run() {
             migrate_legacy_file_access,
             prepare_markdown_assets_dir,
             read_text_file_by_path,
+            get_text_file_size_by_path,
             write_text_file_by_path,
             read_binary_file_by_path,
             write_binary_file_by_path,

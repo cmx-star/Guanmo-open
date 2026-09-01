@@ -36,7 +36,7 @@ export function useFileOperations() {
       }
     } catch (err) {
       console.error('Open file failed:', err)
-      toast.error('打开文件失败')
+      toast.error(describeFileOperationError(err, '打开文件失败'))
     }
   }, [addTab, tabs])
 

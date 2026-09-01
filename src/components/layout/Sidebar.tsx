@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import { useEditorStore } from '@/stores/editorStore'
-import { isTauri, readFile } from '@/hooks/useTauri'
+import { getTextFileSize, isTauri, readFile } from '@/hooks/useTauri'
 import { openFile, pickDirectory } from '@/services/fileSystem'
 import { isWorkspaceDisplayFile } from '@/services/fileTree'
 import { scheduleMarkdownDocumentIndex, isMarkdownPath } from '@/services/rag/indexer'
@@ -15,9 +15,10 @@ import { ContextMenu, ContextMenuGroupTitle, ContextMenuItem, ContextMenuSeparat
 import { addFileContextTag, summarizeFileWithAi } from '@/services/aiContext'
 import { saveExistingFileAs } from '@/services/fileEntryActions'
 import { describeFileOperationError } from '@/services/fileOperationErrors'
-import { readRememberedFile } from '@/services/persistedFileAccess'
+import { getRememberedTextFileSize, readRememberedFile } from '@/services/persistedFileAccess'
 import { TruncatedText } from '@/components/common/Tooltip'
 import { useFileRename } from '@/hooks/useFileRename'
+import { assertSupportedMarkdownFileSize } from '@/services/fileSizeLimit'
 
 interface SidebarProps {
   collapsed: boolean
@@ -56,7 +57,7 @@ export function Sidebar({ collapsed, width, onResizeStart, onOpenSettings, onOpe
       }
     } catch (err) {
       console.error('Open file failed:', err)
-      toast.error('打开文件失败')
+      toast.error(describeFileOperationError(err, '打开文件失败'))
     }
   }, [])
 
@@ -80,6 +81,7 @@ export function Sidebar({ collapsed, width, onResizeStart, onOpenSettings, onOpe
   const handleOpenFileFromTree = useCallback(async (path: string) => {
     try {
       if (!isWorkspaceDisplayFile(path)) return
+      assertSupportedMarkdownFileSize(await getTextFileSize(path))
       const content = await readFile(path)
       const name = path.split(/[/\\]/).pop() || 'untitled.md'
       const state = useEditorStore.getState()
@@ -109,6 +111,7 @@ export function Sidebar({ collapsed, width, onResizeStart, onOpenSettings, onOpe
         state.setActiveTab(existing.id)
         return
       }
+      assertSupportedMarkdownFileSize(await getRememberedTextFileSize(file.path))
       const content = await readRememberedFile(file.path)
       state.addTab(file.path, file.name, content)
       scheduleMarkdownDocumentIndex(file.path, file.name, content)

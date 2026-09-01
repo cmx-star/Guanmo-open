@@ -1,21 +1,31 @@
 import type { Tab } from '@/stores/editorStore'
-import { readRememberedFile } from '@/services/persistedFileAccess'
+import { getRememberedTextFileSize, readRememberedFile } from '@/services/persistedFileAccess'
 import { isWorkspaceDisplayFile } from '@/services/fileTree'
+import {
+  assertSupportedMarkdownFileSize,
+  isFileTooLargeError,
+} from '@/services/fileSizeLimit'
 export { mergeBackgroundRestoredTab } from '@/services/sessionRestorePolicy'
 
 interface RestorePersistedTabsOptions {
   activeTabId?: string | null
   concurrency?: number
   readFile?: (path: string) => Promise<string>
+  getFileSize?: (path: string) => Promise<number>
   detectExternalChanges?: boolean
   onTabRestored?: (tab: Tab, index: number) => void
   onTabRestoreIssue?: (issue: PersistedTabRestoreIssue, index: number) => void
 }
 
-export interface PersistedTabRestoreIssue {
+export type PersistedTabRestoreIssue = {
   kind: 'external-change' | 'unavailable'
   tabId: string
   title: string
+} | {
+  kind: 'too-large'
+  tabId: string
+  title: string
+  sizeBytes: number
 }
 
 export function getRestorablePersistedTabs(tabs: Tab[]): Tab[] {
@@ -25,6 +35,7 @@ export function getRestorablePersistedTabs(tabs: Tab[]): Tab[] {
 async function restorePersistedTab(
   tab: Tab,
   readFile: (path: string) => Promise<string>,
+  getFileSize: (path: string) => Promise<number>,
   detectExternalChanges: boolean,
 ): Promise<{ tab: Tab; issue?: PersistedTabRestoreIssue }> {
   if (!tab.filePath) {
@@ -37,6 +48,7 @@ async function restorePersistedTab(
   }
 
   try {
+    assertSupportedMarkdownFileSize(await getFileSize(tab.filePath))
     const diskContent = await readFile(tab.filePath)
     const externallyChanged = tab.modified
       ? diskContent !== tab.savedContent
@@ -66,6 +78,20 @@ async function restorePersistedTab(
       issue,
     }
   } catch (error) {
+    if (isFileTooLargeError(error)) {
+      return {
+        tab: {
+          ...tab,
+          originalContent: tab.originalContent ?? tab.savedContent ?? tab.content,
+        },
+        issue: {
+          kind: 'too-large',
+          tabId: tab.id,
+          title: tab.title,
+          sizeBytes: error.sizeBytes,
+        },
+      }
+    }
     console.warn('[SessionRestore] Failed to read persisted tab', {
       errorType: error instanceof Error ? error.name : typeof error,
     })
@@ -90,6 +116,8 @@ export async function restorePersistedTabs(
   const restorableTabs = getRestorablePersistedTabs(tabs)
   const restored = [...restorableTabs]
   const readFile = options.readFile ?? readRememberedFile
+  const getFileSize = options.getFileSize
+    ?? (options.readFile ? async () => 0 : getRememberedTextFileSize)
   const activeIndex = restorableTabs.findIndex((tab) => tab.id === options.activeTabId)
   const pendingIndexes = restorableTabs.map((_, index) => index)
   if (activeIndex > 0) {
@@ -105,6 +133,7 @@ export async function restorePersistedTabs(
       const result = await restorePersistedTab(
         restorableTabs[index],
         readFile,
+        getFileSize,
         options.detectExternalChanges ?? false,
       )
       const tab = result.tab

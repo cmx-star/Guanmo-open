@@ -1,5 +1,6 @@
-import { readFile } from '@/hooks/useTauri'
+import { getTextFileSize, readFile } from '@/hooks/useTauri'
 import { describeFileOperationError } from '@/services/fileOperationErrors'
+import { assertSupportedMarkdownFileSize } from '@/services/fileSizeLimit'
 import { isWorkspaceDisplayFile } from '@/services/fileTree'
 import { isSameFilePath } from '@/services/pathIdentity'
 import { scheduleMarkdownDocumentIndex } from '@/services/rag/indexer'
@@ -56,6 +57,7 @@ export async function openExternalFilePaths(
         continue
       }
 
+      assertSupportedMarkdownFileSize(await getTextFileSize(path))
       const content = await readFile(path)
       const name = getFileName(path)
       useEditorStore.getState().addTab(path, name, content)

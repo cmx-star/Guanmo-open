@@ -1,4 +1,7 @@
+import { isFileTooLargeError } from '@/services/fileSizeLimit'
+
 export function describeFileOperationError(err: unknown, fallback: string): string {
+  if (isFileTooLargeError(err)) return err.message
   const message = err instanceof Error ? err.message : String(err)
   const lower = message.toLowerCase()
   if (

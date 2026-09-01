@@ -8,6 +8,7 @@
 import {
   isTauri,
   readFile,
+  getTextFileSize,
   writeFile,
   openFileDialog,
   saveFileDialog,
@@ -21,6 +22,7 @@ import {
 import { isWorkspaceDisplayFile } from '@/services/fileTree'
 import { describeFileOperationError } from '@/services/fileOperationErrors'
 import { eventMarker } from '@/services/eventMarker'
+import { assertSupportedMarkdownFileSize } from '@/services/fileSizeLimit'
 
 export interface FileHandle {
   path: string
@@ -41,6 +43,7 @@ export async function openFile(): Promise<FileHandle | null> {
       eventMarker.mark('open-file-complete', { rejected: true })
       return null
     }
+    assertSupportedMarkdownFileSize(await getTextFileSize(path))
     const content = await readFile(path)
     const name = path.split(/[/\\]/).pop() || 'untitled.md'
     eventMarker.mark('open-file-read-complete', { fileKind: 'disk', charCount: content.length })
@@ -49,24 +52,29 @@ export async function openFile(): Promise<FileHandle | null> {
   }
 
   // Web fallback: use input element
-  return new Promise((resolve) => {
+  return new Promise<FileHandle | null>((resolve, reject) => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.md'
     input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) {
-        resolve(null)
-        return
+      try {
+        const file = input.files?.[0]
+        if (!file) {
+          resolve(null)
+          return
+        }
+        if (!isWorkspaceDisplayFile(file.name)) {
+          resolve(null)
+          return
+        }
+        assertSupportedMarkdownFileSize(file.size)
+        const content = await file.text()
+        eventMarker.mark('open-file-read-complete', { fileKind: 'browser', charCount: content.length })
+        eventMarker.mark('open-file-complete', { fileKind: 'browser' })
+        resolve({ path: file.name, name: file.name, content })
+      } catch (error) {
+        reject(error)
       }
-      if (!isWorkspaceDisplayFile(file.name)) {
-        resolve(null)
-        return
-      }
-      const content = await file.text()
-      eventMarker.mark('open-file-read-complete', { fileKind: 'browser', charCount: content.length })
-      eventMarker.mark('open-file-complete', { fileKind: 'browser' })
-      resolve({ path: file.name, name: file.name, content })
     }
     input.click()
   })

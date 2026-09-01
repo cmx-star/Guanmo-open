@@ -1,6 +1,7 @@
 import {
   migrateLegacyFileAccessPaths,
   readFile,
+  getTextFileSize,
   requestSelectedPathAccess,
   requestWorkspacePathAccess,
 } from '@/hooks/useTauri'
@@ -99,6 +100,10 @@ export async function recoverRememberedAccess<T>(
 
 export function readRememberedFile(path: string): Promise<string> {
   return recoverRememberedAccess(path, () => readFile(path), requestSelectedPathAccess)
+}
+
+export function getRememberedTextFileSize(path: string): Promise<number> {
+  return recoverRememberedAccess(path, () => getTextFileSize(path), requestSelectedPathAccess)
 }
 
 export function recoverRememberedWorkspace<T>(

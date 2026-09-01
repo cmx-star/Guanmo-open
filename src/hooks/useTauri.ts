@@ -30,6 +30,13 @@ export async function readFile(path: string): Promise<string> {
   return invoke<string>('read_text_file_by_path', { path: nativePath })
 }
 
+export async function getTextFileSize(path: string): Promise<number> {
+  if (!isTauri()) throw new Error('Not running in Tauri')
+  const nativePath = toNativeFilePath(path)
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<number>('get_text_file_size_by_path', { path: nativePath })
+}
+
 export interface LegacyFileAccessMigrationResult {
   status: 'migrated' | 'already_migrated'
   workspaceCount: number

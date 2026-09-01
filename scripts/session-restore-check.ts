@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import type { Tab } from '@/stores/editorStore'
 import { mergeBackgroundRestoredTab, restorePersistedTabs } from '@/services/sessionRestore'
+import { MAX_SUPPORTED_MARKDOWN_FILE_SIZE_BYTES } from '@/services/fileSizeLimit'
 
 function tab(id: string, content = ''): Tab {
   return {
@@ -79,6 +80,20 @@ async function run() {
   })
   assert.equal(unavailable.content, 'cached', '文件不可读时必须保留当前内容')
   assert.deepEqual(unavailableIssues, ['unavailable'], '文件不可读时必须返回明确状态')
+
+  let oversizedBodyRead = false
+  const oversizedIssues: string[] = []
+  const [oversized] = await restorePersistedTabs([tab('oversized', 'cached')], {
+    getFileSize: async () => MAX_SUPPORTED_MARKDOWN_FILE_SIZE_BYTES + 1,
+    readFile: async () => {
+      oversizedBodyRead = true
+      return 'should not be read'
+    },
+    onTabRestoreIssue: (issue) => oversizedIssues.push(issue.kind),
+  })
+  assert.equal(oversizedBodyRead, false, '超限文件不得在恢复时读取正文')
+  assert.equal(oversized.content, 'cached', '超限文件不得覆盖现有标签内容')
+  assert.deepEqual(oversizedIssues, ['too-large'], '超限文件必须返回明确状态')
 
   const legacy = { ...tab('legacy'), originalContent: undefined } as unknown as Tab
   const [restoredLegacy] = await restorePersistedTabs([legacy], {
