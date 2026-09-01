@@ -201,7 +201,7 @@ export function EditorArea() {
   const editorTocFrameRef = useRef<number | null>(null)
   const previewScrollFrameRef = useRef<number | null>(null)
   const lastEditorInputAtRef = useRef(0)
-  /** 预览 pane 上最近一次用户滚动手势（wheel / pointerdown）时间戳 */
+  /** 预览 pane 上最近一次用户滚动手势（wheel / pointerdown / keyboard）时间戳 */
   const previewGestureAtRef = useRef(0)
   /** 指针当前是否按在预览 pane 上（覆盖滚动条拖拽、触控拖拽的长时滚动） */
   const previewPointerDownRef = useRef(false)
@@ -1371,6 +1371,11 @@ export function EditorArea() {
       previewGestureAtRef.current = Date.now()
       setScrollSyncSource('preview')
     }
+    const handlePreviewKeyDown = (event: KeyboardEvent) => {
+      if (![' ', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(event.key)) return
+      previewGestureAtRef.current = Date.now()
+      setScrollSyncSource('preview')
+    }
     const handlePreviewPointerDown = () => {
       previewPointerDownRef.current = true
       previewGestureAtRef.current = Date.now()
@@ -1383,6 +1388,7 @@ export function EditorArea() {
     preview.addEventListener('scroll', handlePreviewScroll, { passive: true })
     view.scrollDOM.addEventListener('wheel', handleEditorWheel, { passive: true })
     preview.addEventListener('wheel', handlePreviewWheel, { passive: true })
+    preview.addEventListener('keydown', handlePreviewKeyDown)
     preview.addEventListener('pointerdown', handlePreviewPointerDown, { passive: true })
     window.addEventListener('pointerup', handlePreviewPointerUp, true)
     window.addEventListener('pointercancel', handlePreviewPointerUp, true)
@@ -1392,6 +1398,7 @@ export function EditorArea() {
       preview.removeEventListener('scroll', handlePreviewScroll)
       view.scrollDOM.removeEventListener('wheel', handleEditorWheel)
       preview.removeEventListener('wheel', handlePreviewWheel)
+      preview.removeEventListener('keydown', handlePreviewKeyDown)
       preview.removeEventListener('pointerdown', handlePreviewPointerDown)
       window.removeEventListener('pointerup', handlePreviewPointerUp, true)
       window.removeEventListener('pointercancel', handlePreviewPointerUp, true)
