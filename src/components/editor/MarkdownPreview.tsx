@@ -218,9 +218,10 @@ const StableMarkdownBlock = memo(function StableMarkdownBlock({
   rehypePlugins,
   ...contentProps
 }: StableMarkdownBlockProps) {
+  const isFrontmatter = block.type === 'frontmatter'
   const setElement = useCallback((element: HTMLDivElement | null) => {
-    onElement(globalIndex, element)
-  }, [globalIndex, onElement])
+    if (!isFrontmatter) onElement(globalIndex, element)
+  }, [globalIndex, isFrontmatter, onElement])
   // 按块注入源码 offset 标注：DOM ↔ 文档模型映射的数据来源
   const blockRehypePlugins = useMemo(
     () => [...(rehypePlugins ?? []), createSourceOffsetAnnotator(block.startOffset)],
@@ -235,9 +236,10 @@ const StableMarkdownBlock = memo(function StableMarkdownBlock({
       data-md-block-type={block.type}
       data-md-line={block.startLine}
       data-md-end-line={block.endLine}
-      style={{ position: 'absolute', top, width: '100%' }}
+      aria-hidden={isFrontmatter || undefined}
+      style={{ position: 'absolute', top, width: '100%', height: isFrontmatter ? 0 : undefined, overflow: isFrontmatter ? 'hidden' : undefined }}
     >
-      <StableMarkdownContent {...contentProps} rehypePlugins={blockRehypePlugins} />
+      {!isFrontmatter && <StableMarkdownContent {...contentProps} rehypePlugins={blockRehypePlugins} />}
     </div>
   )
 })
@@ -279,8 +281,8 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   const model = useMemo(() => createMarkdownPreviewModel(displayedContent), [displayedContent])
   const normalizedContent = model.normalizedContent
   const previewContent = useMemo(
-    () => normalizeSvgHtmlBlocks(normalizedContent),
-    [normalizedContent],
+    () => normalizeSvgHtmlBlocks(omitFrontmatter(normalizedContent, model.blocks)),
+    [model.blocks, normalizedContent],
   )
   const referenceDefinitionSource = useMemo(
     () => model.definitions.map((definition) => definition.rawSource).join('\n'),
@@ -1675,7 +1677,7 @@ function estimatePreviewBlockHeight(block: PreviewBlock, fontSize: number, lineH
   const lines = Math.max(1, block.endLine - block.startLine + 1)
   switch (block.type) {
     case 'frontmatter':
-      return Math.max(48, lines * baseLinePx * 1.15 + 12)
+      return 0
     case 'thematicBreak':
       return 32
     case 'heading': {
@@ -1796,6 +1798,13 @@ function resolveImageSrc(src: string | undefined, filePath?: string | null): str
     ? normalizedSrc
     : joinPreviewPath(dirnamePreviewPath(filePath), normalizedSrc)
   return convertFileSrc(absolutePath)
+}
+
+function omitFrontmatter(content: string, blocks: PreviewBlock[]): string {
+  const frontmatter = blocks[0]
+  if (frontmatter?.type !== 'frontmatter') return content
+  const removed = content.slice(0, frontmatter.normalizedEndOffset).replace(/[^\r\n]/g, '')
+  return `${removed}${content.slice(frontmatter.normalizedEndOffset)}`
 }
 
 /**
