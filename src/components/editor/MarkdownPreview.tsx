@@ -244,6 +244,65 @@ const StableMarkdownBlock = memo(function StableMarkdownBlock({
   )
 })
 
+interface MarkdownImageProps {
+  src?: string
+  alt?: string
+  title?: string
+  width?: number | string
+  height?: number | string
+  node?: unknown
+  filePath?: string | null
+  onZoom: (image: { src: string; alt: string }) => void
+}
+
+function MarkdownImage({ src, alt, title, width, height, node, filePath, onZoom }: MarkdownImageProps) {
+  const [failed, setFailed] = useState(false)
+  const base = useBlockLineBase()
+  const resolvedSrc = resolveImageSrc(src, filePath)
+  const altText = alt || '未命名图片'
+  const line = getNodeStartLine(node, base)
+
+  useEffect(() => {
+    setFailed(false)
+  }, [resolvedSrc])
+
+  if (failed || !resolvedSrc) {
+    return (
+      <span
+        role="img"
+        aria-label={`${altText}加载失败`}
+        className="gm-markdown-image-error my-4 inline-flex max-w-full items-center rounded-xl border border-dashed border-gm-border bg-gm-surface-elevated px-4 py-3 text-caption text-gm-text-secondary"
+        data-md-line={line}
+      >
+        <span>图片无法加载：{altText}</span>
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className="gm-markdown-image my-4 block max-w-full cursor-zoom-in rounded-xl border border-gm-border bg-transparent p-0 text-left"
+      onClick={() => onZoom({ src: resolvedSrc, alt: altText })}
+      title="点击放大图片"
+      data-md-line={line}
+    >
+      <img
+        src={resolvedSrc}
+        alt={altText}
+        title={title}
+        width={width}
+        height={height}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
+        className="max-w-full rounded-xl"
+        onError={() => setFailed(true)}
+      />
+    </button>
+  )
+}
+
 export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
   content,
   filePath,
@@ -1483,33 +1542,18 @@ export const MarkdownPreview = memo(forwardRef(function MarkdownPreview({
               {children}
             </td>
           ),
-          img: ({ src, alt, title, width, height, node }) => {
-            // eslint-disable-next-line react-hooks/rules-of-hooks
-            const base = useBlockLineBase()
-            const resolvedSrc = resolveImageSrc(src, filePath)
-            const altText = alt || ''
-            return (
-              <button
-                type="button"
-                className="gm-markdown-image my-4 block max-w-full cursor-zoom-in rounded-xl border border-gm-border bg-transparent p-0 text-left"
-                onClick={() => setZoomImage({ src: resolvedSrc, alt: altText })}
-                title="点击放大图片"
-                data-md-line={getNodeStartLine(node, base)}
-              >
-                <img
-                  src={resolvedSrc}
-                  alt={altText}
-                  title={title}
-                  width={width}
-                  height={height}
-                  referrerPolicy="no-referrer"
-                  loading="lazy"
-                  decoding="async"
-                  className="max-w-full rounded-xl"
-                />
-              </button>
-            )
-          },
+          img: ({ src, alt, title, width, height, node }) => (
+            <MarkdownImage
+              src={src}
+              alt={alt}
+              title={title}
+              width={width}
+              height={height}
+              node={node}
+              filePath={filePath}
+              onZoom={setZoomImage}
+            />
+          ),
           svg: ({ children, className, node: _node, ...props }) => (
             <svg {...props} className={['gm-markdown-inline-svg', className].filter(Boolean).join(' ')}>
               {children}
