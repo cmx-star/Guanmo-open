@@ -73,7 +73,10 @@
         "check:publish": "node scripts/pre-push-check.mjs --release",
         "check:release": "npm run lint && npm run typecheck && npm test && npm run build && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --jobs 1 -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features --jobs 1 && cargo check --manifest-path src-tauri/Cargo.toml --all-targets --all-features --jobs 1",
         "preview": "vite preview",
-        "tauri": "tauri"
+        "tauri": "tauri",
+        "tauri:dev": "tauri dev",
+        "tauri:build:dmg": "tauri build --bundles dmg",
+        "tauri:build:pkg": "tauri build --bundles app && mkdir -p src-tauri/target/release/bundle/pkg && productbuild --component src-tauri/target/release/bundle/macos/*.app /Applications src-tauri/target/release/bundle/pkg/guanmo.pkg"
     },
     "dependencies": {
         "@codemirror/autocomplete": "^6.20.2",
@@ -99,7 +102,7 @@
         "@tauri-apps/api": "^2.11.0",
         "@tauri-apps/plugin-dialog": "^2.7.1",
         "@tauri-apps/plugin-fs": "^2.5.1",
-        "@tauri-apps/plugin-notification": "^2.3.3",
+        "@tauri-apps/plugin-notification": "2.3.3",
         "@tauri-apps/plugin-shell": "^2.3.5",
         "@tauri-apps/plugin-sql": "^2.4.0",
         "codemirror": "^6.0.2",
