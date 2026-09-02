@@ -4,7 +4,7 @@
  * 仅维护 UI 所需的列表、筛选与选中状态；持久化由 readingArtifacts repository 完成。
  * 删除成果不会改动原文；来源失效时由组件根据锚点校验结果展示恢复提示。
  */
-import { create } from 'zustand'
+import { createStore as create } from 'zustand/vanilla'
 import type { ChatMessageSource, ReadingScope } from '@/services/ai/types'
 import {
   type ReadingArtifact,

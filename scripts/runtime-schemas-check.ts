@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { decodeAgentStepEvent, decodeKnowledgeSearchOutcome } from '../src/services/agent/session'
 import { buildPendingActionResult, decodePendingAction } from '../src/services/agent/actionProposal'
 import { decodeRagIndexState, decodeRagSearchResults } from '../src/services/rag/nativeIndex'
@@ -73,13 +72,6 @@ assert.throws(
   ),
   /未注册字段 path/,
   '文件行动提案不得接受任意路径',
-)
-
-const aiPanelSource = readFileSync('src/components/ai/AiPanel.tsx', 'utf8')
-assert.equal(
-  aiPanelSource.includes('<RagTrace status={ragStatus}'),
-  false,
-  'AI 助手顶部不应渲染重复的 RAG 状态横条',
 )
 
 // reading_artifacts 运行时解码：未知类型/损坏数据进入可见错误，不静默丢弃

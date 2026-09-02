@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore as create } from 'zustand/vanilla'
 import { persist } from 'zustand/middleware'
 import { createWorkspaceRoot, normalizeWorkspacePath, type WorkspaceRoot } from '@/services/workspaceIdentity'
 

@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore as create } from 'zustand/vanilla'
 import type { PerfData } from '@/services/perfTypes'
 import type { PerfEvent } from '@/services/eventMarker'
 

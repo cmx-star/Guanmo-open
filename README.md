@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Tauri_2-24C8DB?style=flat-square&logo=tauri&logoColor=white" alt="Tauri 2" />
-  <img src="https://img.shields.io/badge/React_18-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 18" />
+  <img src="https://img.shields.io/badge/Vue_3-42B883?style=flat-square&logo=vue.js&logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/TypeScript_5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5" />
   <img src="https://img.shields.io/badge/CodeMirror_6-D30707?style=flat-square&logo=codemirror&logoColor=white" alt="CodeMirror 6" />
   <img src="https://img.shields.io/badge/Vite_6-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite 6" />
@@ -191,14 +191,15 @@ VITE_GUANMO_WEB_SEARCH_API_KEY_SECRET=guanmo.web-search.api-key
 | 层级 | 技术 |
 |------|------|
 | **桌面壳** | Tauri 2 (Rust) |
-| **前端框架** | React 18 + TypeScript 5.7 |
+| **前端框架** | Vue 3 (Composition API) + TypeScript 5.7 |
 | **构建工具** | Vite 6 |
 | **编辑器** | CodeMirror 6 |
-| **状态管理** | Zustand 5（4 个持久化 Store） |
+| **状态管理** | Zustand 5 (vanilla) + Pinia |
 | **样式** | Tailwind CSS 3.4 + 自定义设计令牌 |
-| **UI 组件库** | Animal Island UI |
+| **UI 组件库** | PrimeVue 4 |
+| **国际化** | vue-i18n |
 | **数据库** | SQLite（Tauri SQL 插件） |
-| **Markdown 渲染** | react-markdown + remark-gfm + rehype-katex + rehype-highlight |
+| **Markdown 渲染** | remark + rehype-katex + 自定义渲染层 |
 | **图表** | Mermaid |
 | **数学公式** | KaTeX |
 | **安全** | Windows DPAPI 加密存储 API Key |
@@ -291,17 +292,15 @@ guanmo/
 │   │   │                     # Long-term memory service
 │   │   └── database/           # SQLite 初始化、Schema、CRUD
 │   │                         # SQLite init, schema, persistence
-│   ├── stores/                 # Zustand 状态管理（app / editor / chat / settings）
-│   │                         # Zustand stores (app / editor / chat / settings)
-│   ├── hooks/                  # 自定义 Hooks：AI 聊天、文件操作、快捷键
-│   │                         # Custom hooks: AI chat, file ops, keyboard
+│   ├── stores/                 # Zustand (vanilla) 状态管理（app / editor / chat / settings）
+│   │                         # Zustand (vanilla) stores (app / editor / chat / settings)
+│   ├── composables/            # Vue Composition API 组合函数
+│   │                         # Vue Composition API composables
 │   ├── features/               # 功能模块：设置页面
 │   │                         # Feature modules: settings page
-│   ├── styles/                 # 全局样式 + 主题令牌（亮色 / 暗色 / 动物暗色）
-│   │   └── tokens/             # 主题设计令牌：light.css / dark.css / animal-dark.css
-│   │                         # Global styles + theme tokens (light / dark / animal-dark)
-│   └── vendor/                 # 内置 UI 组件库：Animal Island UI
-│                             # Vendored UI library: Animal Island UI
+│   ├── styles/                 # 全局样式 + 主题令牌（亮色 / 暗色）
+│   │   └── tokens/             # 主题设计令牌：ink-light.css / ink-dark.css
+│   │                         # Global styles + theme tokens (ink-light / ink-dark)
 ├── src-tauri/
 │   ├── src/lib.rs              # Rust 后端：DPAPI 加密、文件操作命令
 │   │                         # Rust backend: DPAPI encryption, file commands
@@ -351,8 +350,6 @@ git push origin v1.3.0
 
 ## 🧩 第三方组件与品牌说明 · Third-party Notices
 
-- 本项目 vendored 了 [animal-island-ui](https://github.com/guokaigdg/animal-island-ui) 的组件快照，并保留其 MIT 许可证。
-- animal-island-ui 上游 README 同时包含非商业使用说明，该说明与 MIT LICENSE 的授权范围存在表述差异；计划商业分发前请自行核对上游条款。
 - 观墨不是 Nintendo 官方产品，与 Nintendo Co., Ltd. 无关联、授权或合作关系。
 - 完整归属与许可说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 

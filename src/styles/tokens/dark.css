@@ -1,5 +1,6 @@
 /* === 观墨 Deep Dark Theme === */
-[data-theme='dark'] {
+[data-theme='dark'],
+:root[data-theme-id='ink-dark'] {
   /* Canvas & Surfaces (4-step ladder) */
   --gm-canvas: #15130f;
   --gm-surface: #1d1a15;

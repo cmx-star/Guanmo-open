@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore as create } from 'zustand/vanilla'
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware'
 import { isSameFilePath, normalizeFilePath } from '@/services/pathIdentity'
 import { mergeBackgroundRestoredTab } from '@/services/sessionRestorePolicy'

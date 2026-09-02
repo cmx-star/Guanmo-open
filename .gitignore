@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+.pnpm-store/
+pnpm-workspace.yaml
 
 # Build output
 dist/
@@ -79,3 +81,4 @@ AI_IMPLEMENTATION_PLAN.md
 .playwright-cli/
 # Added by code-review-graph
 .code-review-graph/
+.work/

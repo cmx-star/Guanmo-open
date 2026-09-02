@@ -8,7 +8,7 @@
  */
 
 import type { ChatMessage } from '@/services/ai/types'
-import type { ManualCapability } from '@/components/ai/ManualToolToggle'
+import type { ManualCapability } from '@/types/aiManual'
 import type { AgentTaskContext } from './types'
 import type { RoutingDecision, RoutingReasonCode } from './types'
 import {

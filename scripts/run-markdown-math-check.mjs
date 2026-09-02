@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import { build } from 'esbuild'
 
 const result = await build({
-  entryPoints: ['scripts/markdown-math-check.tsx'],
+  entryPoints: ['scripts/markdown-math-check.ts'],
   bundle: true,
   platform: 'node',
   format: 'esm',

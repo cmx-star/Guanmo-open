@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore as create } from 'zustand/vanilla'
 import type { ActionProposal, ChatMessage, ChatMessageContextMeta, ChatMessageSource, EditConfirmation } from '@/services/ai/types'
 import { normalizeSafeWebSourceUrl, type SourceReferenceId } from '@/services/ai/sourceReferences'
 import type { AgentStep, AgentTaskContext } from '@/services/agent/types'

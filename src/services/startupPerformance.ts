@@ -3,7 +3,6 @@ import { isTauri } from '@/hooks/useTauri'
 
 export type StartupPerformancePoint =
   | 'frontend-bootstrap'
-  | 'first-react-render'
   | 'app-shell-first-visible'
   | 'app-shell-interactive'
   | 'secrets-hydrated'
@@ -18,12 +17,6 @@ export type StartupPerformancePoint =
   | 'preview-first-visible'
   | 'preview-render-complete'
   | 'app-ready'
-  | 'app-module-ready'
-  | 'main-module-evaluated'
-  | 'create-root-start'
-  | 'react-render-start'
-  | 'react-mounted'
-  | 'startup-shell-removed'
   | 'first-animation-frame'
   | 'startup-session-restore-complete'
   | 'window-shown'
@@ -92,8 +85,6 @@ const RELEASE_METRIC_MARKS: Readonly<Record<string, string>> = {
   T4_HTML_START: 'html-start',
   T5_DOM_READY: 'startup-shell-dom-ready',
   T7_MAIN_TS_START: 'main-module-evaluated',
-  T8_REACT_RENDER_START: 'react-render-start',
-  T9_APP_MOUNTED: 'react-mounted',
   T10_MAIN_UI_PAINT: 'app-shell-first-visible',
   T11_WINDOW_SHOW: 'window-shown',
   T12_SESSION_RESTORED: 'startup-session-restore-complete',
@@ -169,16 +160,9 @@ const STARTUP_TIMELINE_SEMANTICS: ReadonlyArray<{ point: string; semantic: strin
   { point: 'html-start', semantic: 'HTML 解析开始（head 内首个同步 mark，导航零点为 timeOrigin）' },
   { point: 'startup-shell-dom-ready', semantic: '静态 Startup Shell DOM 已提交给解析器（未绘制）' },
   { point: 'html-parsed', semantic: 'HTML 解析到达文档尾部' },
-  { point: 'main-module-requested', semantic: '开始请求/解析 main.tsx 静态依赖图' },
-  { point: 'app-module-ready', semantic: '@app-entry 及静态依赖完成加载求值（与下一行同边界）' },
-  { point: 'main-module-evaluated', semantic: 'main.tsx 模块体开始执行' },
+  { point: 'main-module-requested', semantic: '开始请求/解析入口模块静态依赖图' },
   { point: 'frontend-bootstrap', semantic: '前端引导（历史点位）' },
-  { point: 'create-root-start', semantic: '调用 ReactDOM.createRoot 之前' },
-  { point: 'react-render-start', semantic: '调用 root.render 之前' },
-  { point: 'react-mounted', semantic: 'React 首次真实 DOM commit 完成' },
-  { point: 'startup-shell-removed', semantic: '静态 Shell 已被 React 接管移除' },
   { point: 'window-shown', semantic: '主窗口 show() 完成（visible:false 冷启动的显示点）' },
-  { point: 'first-react-render', semantic: 'App 组件首次渲染执行' },
   { point: 'first-animation-frame', semantic: '首个 RAF callback 到达（不代表交互就绪）' },
   { point: 'app-shell-first-visible', semantic: '真实 AppShell 首次可见' },
   { point: 'app-shell-interactive', semantic: '真实 AppShell passive 交互就绪' },

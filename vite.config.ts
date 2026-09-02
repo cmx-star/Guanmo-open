@@ -1,23 +1,36 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
 export default defineConfig(({ mode }) => ({
   base: './',
   plugins: [
-    react(),
+    vue(),
     {
       name: 'guanmo-build-mode',
+      enforce: 'pre',
+      resolveId(source) {
+        if (source === '/src/main.ts') {
+          if (mode === 'web') return path.resolve(__dirname, './src/main.web.ts')
+          if (mode === 'desktop') return path.resolve(__dirname, './src/main.desktop.ts')
+        }
+        return null
+      },
       transformIndexHtml(html) {
-        return html.replace('<head>', `<head>\n    <meta name="guanmo-build-mode" content="${mode}" />`)
+        const entry = mode === 'web'
+          ? '/src/main.web.ts'
+          : mode === 'desktop'
+            ? '/src/main.desktop.ts'
+            : '/src/main.ts'
+        return html
+          .replace('<head>', `<head>\n    <meta name="guanmo-build-mode" content="${mode}" />`)
+          .replace('/src/main.ts', entry)
       },
     },
   ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@app-entry': path.resolve(__dirname, mode === 'web' ? './src/WebApp.tsx' : './src/App.tsx'),
-      'animal-island-ui': path.resolve(__dirname, './src/vendor/animal-island-ui/index.ts'),
     },
   },
   clearScreen: false,
@@ -37,9 +50,11 @@ export default defineConfig(({ mode }) => ({
         manualChunks: mode === 'web'
           ? undefined
           : {
-              'react-core': [
-                'react',
-                'react-dom',
+              'vue-core': [
+                'vue',
+                'vue-i18n',
+                'pinia',
+                'primevue',
               ],
             },
       },

@@ -10,7 +10,10 @@ use std::{
     sync::Mutex,
     time::Duration,
 };
-use tauri::{Emitter, Manager, State};
+use tauri::{
+    menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
+    Emitter, Manager, State,
+};
 use tauri_plugin_fs::FsExt;
 
 mod api_http;
@@ -31,7 +34,158 @@ const ALLOWED_TEXT_FILE_EXTENSIONS: [&str; 11] = [
 const ALLOWED_IMAGE_FILE_EXTENSIONS: [&str; 7] =
     ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 const OPEN_FILES_EVENT: &str = "guanmo:open-files";
+const MENU_COMMAND_EVENT: &str = "guanmo:menu-command";
 const MAIN_WINDOW_REVEAL_FALLBACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn install_application_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let settings = MenuItem::with_id(app, "app.settings", "设置...", true, Some("CmdOrCtrl+,"))?;
+
+    let new_file = MenuItem::with_id(app, "file.new", "新建文件", true, Some("CmdOrCtrl+N"))?;
+    let open_file = MenuItem::with_id(app, "file.open", "打开文件...", true, Some("CmdOrCtrl+O"))?;
+    let save_file = MenuItem::with_id(app, "file.save", "保存", true, Some("CmdOrCtrl+S"))?;
+    let close_tab = MenuItem::with_id(app, "file.close-tab", "关闭标签页", true, None::<&str>)?;
+    let export_html = MenuItem::with_id(
+        app,
+        "file.export-html",
+        "导出为 HTML...",
+        true,
+        Some("CmdOrCtrl+Shift+E"),
+    )?;
+
+    let undo = MenuItem::with_id(app, "edit.undo", "撤销", true, Some("CmdOrCtrl+Z"))?;
+    let redo = MenuItem::with_id(app, "edit.redo", "重做", true, Some("CmdOrCtrl+Shift+Z"))?;
+    let find = MenuItem::with_id(app, "edit.find", "查找", true, Some("CmdOrCtrl+F"))?;
+
+    let command_palette = MenuItem::with_id(
+        app,
+        "view.command-palette",
+        "命令面板...",
+        true,
+        Some("CmdOrCtrl+Shift+P"),
+    )?;
+    let toggle_sidebar = MenuItem::with_id(
+        app,
+        "view.toggle-sidebar",
+        "显示/隐藏侧边栏",
+        true,
+        Some("CmdOrCtrl+B"),
+    )?;
+    let toggle_ai = MenuItem::with_id(
+        app,
+        "view.toggle-ai",
+        "显示/隐藏 AI 助手",
+        true,
+        Some("CmdOrCtrl+J"),
+    )?;
+    let toggle_preview = MenuItem::with_id(
+        app,
+        "view.toggle-preview",
+        "切换预览",
+        true,
+        Some("CmdOrCtrl+Shift+V"),
+    )?;
+    let toggle_fullscreen =
+        MenuItem::with_id(app, "view.toggle-fullscreen", "切换全屏", true, Some("F11"))?;
+
+    let product_tour = MenuItem::with_id(app, "help.product-tour", "新手引导", true, None::<&str>)?;
+    let feature_intro =
+        MenuItem::with_id(app, "help.feature-intro", "功能介绍", true, None::<&str>)?;
+
+    let app_menu = SubmenuBuilder::new(app, "观墨")
+        .item(&PredefinedMenuItem::about(app, Some("关于观墨"), None)?)
+        .separator()
+        .item(&settings)
+        .separator()
+        .item(&PredefinedMenuItem::services(app, None)?)
+        .item(&PredefinedMenuItem::hide(app, None)?)
+        .item(&PredefinedMenuItem::hide_others(app, None)?)
+        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(app, None)?)
+        .build()?;
+
+    let file_menu = SubmenuBuilder::new(app, "文件")
+        .items(&[&new_file, &open_file, &save_file])
+        .separator()
+        .item(&export_html)
+        .separator()
+        .item(&close_tab)
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(app, "编辑")
+        .items(&[&undo, &redo])
+        .separator()
+        .items(&[
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ])
+        .separator()
+        .item(&find)
+        .build()?;
+
+    let view_menu = SubmenuBuilder::new(app, "视图")
+        .item(&command_palette)
+        .separator()
+        .items(&[&toggle_sidebar, &toggle_ai, &toggle_preview])
+        .separator()
+        .item(&toggle_fullscreen)
+        .build()?;
+
+    let window_menu = SubmenuBuilder::new(app, "窗口")
+        .items(&[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ])
+        .build()?;
+
+    let help_menu = SubmenuBuilder::new(app, "帮助")
+        .items(&[&product_tour, &feature_intro])
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .items(&[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ])
+        .build()?;
+    app.set_menu(menu)?;
+
+    app.on_menu_event(|app, event| {
+        let id = event.id().as_ref();
+        if matches!(
+            id,
+            "app.settings"
+                | "file.new"
+                | "file.open"
+                | "file.save"
+                | "file.close-tab"
+                | "file.export-html"
+                | "edit.undo"
+                | "edit.redo"
+                | "edit.find"
+                | "view.command-palette"
+                | "view.toggle-sidebar"
+                | "view.toggle-ai"
+                | "view.toggle-preview"
+                | "view.toggle-fullscreen"
+                | "help.product-tour"
+                | "help.feature-intro"
+        ) {
+            if let Err(error) = app.emit(MENU_COMMAND_EVENT, id) {
+                eprintln!("failed to forward native menu command: {error}");
+            }
+        }
+    });
+
+    Ok(())
+}
 
 fn reveal_main_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
     if let Err(err) = window.show() {
@@ -1446,6 +1600,7 @@ pub fn run() {
             // （OS 窗口 + WebView2 环境/控制器）创建，再执行本回调。
             startup_metrics::mark("SETUP_CALLBACK_START");
             startup_metrics::mark("T2_WINDOW_CREATED");
+            install_application_menu(app)?;
             if let Err(err) =
                 reading_reminder_notifications::ensure_windows_notification_registration()
             {

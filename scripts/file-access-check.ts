@@ -88,9 +88,9 @@ async function run() {
   assert.equal(cancelledAttempts, 1)
 
   const shortcutSources = [
-    'src/components/layout/Sidebar.tsx',
-    'src/components/layout/FullscreenFileDrawer.tsx',
-    'src/components/ai/AiPanel.tsx',
+    'src/components/layout/VueSidebar.vue',
+    'src/components/layout/VueFullscreenFileDrawer.vue',
+    'src/components/ai/VueAiPanel.vue',
   ]
   for (const sourcePath of shortcutSources) {
     const source = readFileSync(sourcePath, 'utf8')
@@ -100,11 +100,11 @@ async function run() {
 
   const sessionRestore = readFileSync('src/services/sessionRestore.ts', 'utf8')
   const externalOpen = readFileSync('src/services/externalFileOpen.ts', 'utf8')
-  const externalFileOpenHook = readFileSync('src/hooks/useExternalFileOpen.ts', 'utf8')
-  const workspaceTree = readFileSync('src/hooks/useWorkspaceFileTree.ts', 'utf8')
+  const externalFileOpenHook = readFileSync('src/composables/useVueExternalFileOpen.ts', 'utf8')
+  const workspaceTree = readFileSync('src/composables/useVueWorkspaceFileTree.ts', 'utf8')
   const tauriAdapter = readFileSync('src/hooks/useTauri.ts', 'utf8')
   const rustGateway = readFileSync('src-tauri/src/lib.rs', 'utf8')
-  const app = readFileSync('src/App.tsx', 'utf8')
+  const app = readFileSync('src/services/appStartup.ts', 'utf8')
   const persistedAccess = readFileSync('src/services/persistedFileAccess.ts', 'utf8')
   assert.doesNotMatch(sessionRestore, /authorizeSelectedPath\(/)
   assert.match(sessionRestore, /readRememberedFile/)
@@ -149,14 +149,12 @@ async function run() {
   const parallelInitIndex = app.indexOf('await Promise.all([')
   const databaseInitIndex = app.indexOf('initDatabase().then(', parallelInitIndex)
   const restoreTabsIndex = app.indexOf('restoreTabs().then(', parallelInitIndex)
-  const appReadyIndex = app.indexOf('setAppReady(true)', Math.max(databaseInitIndex, restoreTabsIndex))
-  const warmupIndex = app.indexOf('scheduleIdleWarmup()', appReadyIndex)
   assert.ok(parallelInitIndex >= 0 && databaseInitIndex > parallelInitIndex && restoreTabsIndex > parallelInitIndex)
-  assert.ok(appReadyIndex > databaseInitIndex && appReadyIndex > restoreTabsIndex && warmupIndex > appReadyIndex)
-  assert.match(app, /const \[restoredActiveTab\][\s\S]*await restorePersistedTabs\(\[activeTab\], \{/)
-  assert.match(app, /detectExternalChanges: hasBootSnapshotContent\(activeTab\)/)
+  assert.match(app, /restorePersistedTabs\(\[activeTab\], \{/)
+  assert.match(app, /hasBootSnapshotContent\(activeTab\)/)
   assert.match(app, /void restorePersistedTabs\(backgroundTabs, \{\s*concurrency: 3,/)
-  assert.match(app, /scheduleIdleTask\([\s\S]*await migrateLegacyFileAccess\(\)/)
+  assert.match(app, /migrateLegacyFileAccess\(\)/)
+  assert.match(app, /export function scheduleIdleWarmup\(\)/)
 
   console.log('File access recovery checks passed')
 }

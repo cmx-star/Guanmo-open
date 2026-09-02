@@ -2,7 +2,6 @@ import type { PerfData } from '@/services/perfTypes'
 
 export type PerfEventType =
   | 'frontend-bootstrap'
-  | 'first-react-render'
   | 'app-shell-first-visible'
   | 'app-shell-interactive'
   | 'secrets-hydrated'

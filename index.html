@@ -42,7 +42,7 @@
     </script>
     <!-- Startup Shell 样式不能内联：Tauri 会给内联 <style> 注入 CSP nonce，
          nonce 会使 'unsafe-inline' 失效，拦截 CodeMirror 等运行时动态样式。
-         样式改由 main.tsx import（打进入口 CSS，<link> 加载，'self' 放行）；
+         样式改由 main.ts import（打进入口 CSS，<link> 加载，'self' 放行）；
          body 回退色与原生窗口 backgroundColor 一同兜底首屏底色。 -->
   </head>
   <body style="margin:0;background:var(--gmss-canvas, #f8f4e8);color:var(--gmss-text, #794f27);">
@@ -66,7 +66,7 @@
     </div>
     <script>performance.mark('guanmo:startup:startup-shell-dom-ready')</script>
     <script>performance.mark('guanmo:startup:main-module-requested')</script>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/main.ts"></script>
     <script>performance.mark('guanmo:startup:html-parsed')</script>
   </body>
 </html>

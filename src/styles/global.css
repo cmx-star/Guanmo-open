@@ -1,6 +1,5 @@
-/* Our light theme tokens */
-@import './tokens/light.css';
-@import './tokens/dark.css';
+/* One semantic token contract; themes only replace values. */
+@import './tokens/ink.css';
 @import './tokens/animal-dark.css';
 
 /* Toast animations */

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { findNearestMatchIndex } from '@/components/editor/SearchOverlay'
+import { findNearestMatchIndex } from '@/services/editorSearch'
 
 const matches = [
   { from: 10, to: 13 },

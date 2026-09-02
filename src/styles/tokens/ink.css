@@ -1,0 +1,74 @@
+/*
+ * The application has one semantic token contract. Theme files only assign
+ * values to these --gm-* names; components must never depend on a palette.
+ */
+@import './light.css';
+@import './dark.css';
+@import './official-light.css';
+
+:root {
+  --gm-font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --gm-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --gm-text-xs: 12px;
+  --gm-text-sm: 13px;
+  --gm-text-base: 14px;
+  --gm-text-lg: 16px;
+  --gm-text-xl: 20px;
+  --gm-text-2xl: 24px;
+  --gm-space-1: 4px;
+  --gm-space-2: 8px;
+  --gm-space-3: 12px;
+  --gm-space-4: 16px;
+  --gm-space-5: 20px;
+  --gm-space-6: 24px;
+  --gm-space-8: 32px;
+  --gm-radius-sm: 4px;
+  --gm-radius-md: 6px;
+  --gm-radius-lg: 8px;
+  --gm-shadow-sm: 0 1px 2px rgb(23 33 43 / 8%);
+  --gm-shadow-md: 0 8px 24px rgb(23 33 43 / 12%);
+  --gm-duration-fast: 120ms;
+  --gm-duration-base: 180ms;
+}
+
+/* Compatibility aliases make the contract complete for existing pages. */
+:root {
+  --gm-surface-muted: var(--gm-surface-elevated);
+  --gm-text-muted: var(--gm-text-tertiary);
+  --gm-text-inverse: var(--gm-text-on-primary);
+  --gm-danger: var(--gm-error);
+  --gm-danger-subtle: color-mix(in srgb, var(--gm-error) 14%, var(--gm-surface));
+  --gm-info-subtle: color-mix(in srgb, var(--gm-info) 14%, var(--gm-surface));
+  --gm-success-subtle: color-mix(in srgb, var(--gm-success) 14%, var(--gm-surface));
+  --gm-warning-subtle: color-mix(in srgb, var(--gm-warning) 14%, var(--gm-surface));
+  --gm-focus: var(--gm-border-focus);
+  --gm-radius-md: 6px;
+  --gm-shadow-sm: 0 1px 2px rgb(23 33 43 / 8%);
+  --gm-shadow-md: 0 8px 24px rgb(23 33 43 / 12%);
+}
+
+/* Web preferences use these stable ids; the desktop keeps its existing ids. */
+:root[data-theme-id='ink-light'] {
+  --gm-canvas: #f7f9fb;
+  --gm-surface: #ffffff;
+  --gm-surface-elevated: #f1f4f6;
+  --gm-surface-overlay: #ffffff;
+  --gm-surface-hover: rgb(23 33 43 / 6%);
+  --gm-text: #17212b;
+  --gm-text-secondary: #526273;
+  --gm-text-tertiary: #788695;
+  --gm-text-disabled: #99a6b1;
+  --gm-text-on-primary: #f7fafc;
+  --gm-primary: #176b68;
+  --gm-primary-hover: #105956;
+  --gm-primary-active: #0c4846;
+  --gm-primary-subtle: #ddf0ee;
+  --gm-border: #d9e1e7;
+  --gm-border-subtle: #e9eef2;
+  --gm-border-strong: #b9c6d0;
+  --gm-border-focus: #3982bb;
+  --gm-info: #356fa8;
+  --gm-success: #257a56;
+  --gm-warning: #a96016;
+  --gm-error: #bf3d3a;
+}

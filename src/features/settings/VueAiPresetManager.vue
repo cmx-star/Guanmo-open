@@ -1,0 +1,25 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useZustandSelector } from '@/composables/useZustandSelector'
+import { toast } from '@/services/toast'
+import { useSettingsStore } from '@/stores/settingsStore'
+
+const { t } = useI18n()
+defineProps<{ chatTestOk: boolean; embeddingTestOk: boolean }>()
+const ai = useZustandSelector(useSettingsStore, (state) => state.ai)
+const chatPresets = useZustandSelector(useSettingsStore, (state) => state.customChatPresets)
+const embeddingPresets = useZustandSelector(useSettingsStore, (state) => state.customEmbeddingPresets)
+const chatName = ref(''), embeddingName = ref('')
+function saveChat(): void { const label = chatName.value.trim(); if (!label) return; useSettingsStore.getState().addCustomChatPreset({ id: `custom-chat-${Date.now()}`, label, protocol: ai.value.protocol, provider: ai.value.provider, baseUrl: ai.value.baseUrl, chatModel: ai.value.chatModel }); chatName.value = ''; toast.success(t('aiPresets.saved', { label })) }
+function saveEmbedding(): void { const label = embeddingName.value.trim(); if (!label) return; useSettingsStore.getState().addCustomEmbeddingPreset({ id: `custom-emb-${Date.now()}`, label, protocol: ai.value.embedding.protocol, provider: ai.value.embedding.provider, baseUrl: ai.value.embedding.baseUrl, embeddingModel: ai.value.embedding.embeddingModel }); embeddingName.value = ''; toast.success(t('aiPresets.embeddingSaved', { label })) }
+</script>
+
+<template>
+  <section class="gm-vue-preset-manager"><div v-if="chatTestOk" class="gm-vue-preset-manager__row"><span><b>{{ t('aiPresets.saveChat') }}</b><small>{{ t('aiPresets.saveChatHint') }}</small></span><input v-model="chatName" :placeholder="t('aiPresets.namePlaceholder')" /><button type="button" :disabled="!chatName.trim()" @click="saveChat">{{ t('aiPresets.save') }}</button></div><div v-if="embeddingTestOk" class="gm-vue-preset-manager__row"><span><b>{{ t('aiPresets.saveEmbedding') }}</b><small>{{ t('aiPresets.saveEmbeddingHint') }}</small></span><input v-model="embeddingName" :placeholder="t('aiPresets.namePlaceholder')" /><button type="button" :disabled="!embeddingName.trim()" @click="saveEmbedding">{{ t('aiPresets.save') }}</button></div><div v-if="chatPresets.length || embeddingPresets.length" class="gm-vue-preset-manager__saved"><div v-for="item in chatPresets" :key="item.id"><span>{{ item.label }}<small>{{ t('aiPresets.chatPreset') }}</small></span><button type="button" class="gm-vue-settings-danger" @click="useSettingsStore.getState().removeCustomChatPreset(item.id)">{{ t('aiPresets.delete') }}</button></div><div v-for="item in embeddingPresets" :key="item.id"><span>{{ item.label }}<small>{{ t('aiPresets.embeddingPreset') }}</small></span><button type="button" class="gm-vue-settings-danger" @click="useSettingsStore.getState().removeCustomEmbeddingPreset(item.id)">{{ t('aiPresets.delete') }}</button></div></div><details class="gm-vue-preset-manager__advanced"><summary>{{ t('aiPresets.advanced') }}</summary><label>{{ t('aiPresets.chatTimeout') }} <input type="range" min="5" max="300" step="5" :value="ai.timeout / 1000" @input="useSettingsStore.getState().updateAiConfig({ timeout: Number(($event.target as HTMLInputElement).value) * 1000 })" />{{ ai.timeout / 1000 }} {{ t('aiPresets.seconds') }}</label><label>{{ t('aiPresets.embeddingTimeout') }} <input type="range" min="5" max="300" step="5" :value="ai.embedding.timeout / 1000" @input="useSettingsStore.getState().updateEmbeddingConfig({ timeout: Number(($event.target as HTMLInputElement).value) * 1000 })" />{{ ai.embedding.timeout / 1000 }} {{ t('aiPresets.seconds') }}</label></details>
+  </section>
+</template>
+
+<style scoped>
+.gm-vue-preset-manager { display: grid; gap: 8px; }.gm-vue-preset-manager__row,.gm-vue-preset-manager__saved > div { display: flex; padding: 8px 0; align-items: center; gap: 8px; border-bottom: 1px solid var(--gm-border-subtle); }.gm-vue-preset-manager__row span,.gm-vue-preset-manager__saved span { display: grid; min-width: 0; flex: 1; gap: 3px; }.gm-vue-preset-manager b { color: var(--gm-text); font-size: var(--gm-text-sm); }.gm-vue-preset-manager small { color: var(--gm-text-tertiary); font-size: var(--gm-text-xs); }.gm-vue-preset-manager input { min-width: 120px; max-width: 190px; padding: 6px 8px; color: var(--gm-text); border: 1px solid var(--gm-border); border-radius: var(--gm-radius-sm); background: var(--gm-canvas); font-size: var(--gm-text-xs); }.gm-vue-preset-manager button { padding: 6px 8px; color: var(--gm-text-secondary); border: 1px solid var(--gm-border); border-radius: var(--gm-radius-sm); background: var(--gm-surface); font-size: var(--gm-text-xs); }.gm-vue-preset-manager__advanced { padding: 8px 0; color: var(--gm-text-secondary); font-size: var(--gm-text-sm); }.gm-vue-preset-manager__advanced summary { cursor: pointer; }.gm-vue-preset-manager__advanced label { display: grid; grid-template-columns: 80px minmax(0, 1fr) 54px; margin-top: 8px; align-items: center; gap: 8px; }.gm-vue-preset-manager__advanced input { width: 100%; max-width: none; padding: 0; accent-color: var(--gm-primary); }
+</style>
