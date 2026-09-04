@@ -72,7 +72,10 @@ export function installPrimeVue(app: App): void {
     theme: {
       preset: GuanmoPreset,
       options: {
-        darkModeSelector: '[data-theme-id="ink-dark"]',
+        // Web (applyDocumentTheme) 与桌面 (syncDocumentTheme) 深色时都在根节点
+        // 写 data-theme="dark"；不要只匹配 ink-dark，否则桌面端 PrimeVue
+        // 弹层（设置 Dialog 等）会按浅色模式渲染出白底。
+        darkModeSelector: '[data-theme="dark"]',
       },
     },
   })

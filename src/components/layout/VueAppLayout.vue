@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import Dialog from 'primevue/dialog'
 import { listen } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
 import { getActiveEditorView } from '@/services/editorViewRef'
 import { exportMarkdownAsHtml } from '@/services/markdownExport'
 import { NATIVE_MENU_COMMAND_EVENT, type NativeMenuCommand } from '@/services/nativeMenu'
@@ -14,6 +15,8 @@ import { PRODUCT_TOUR_DEMO_CONTENT, PRODUCT_TOUR_DEMO_TAB_ID } from '@/features/
 import { markStartupPoint } from '@/services/startupPerformance'
 import { isTauri } from '@/hooks/useTauri'
 import { toast } from '@/services/toast'
+import { pickDirectory } from '@/services/fileSystem'
+import { describeFileOperationError } from '@/services/fileOperationErrors'
 import { useAppStore, type AiServiceStatus } from '@/stores/appStore'
 import { useEditorHistoryStore } from '@/stores/editorHistoryStore'
 import { useEditorStore, type ViewMode } from '@/stores/editorStore'
@@ -56,9 +59,9 @@ const featureIntroVersion = ref<string | undefined>()
 const fullscreenFileDrawerOpen = ref(false)
 const productTourOpen = ref(false)
 const productTourStep = ref(0)
-const maximized = ref(false)
 const fullscreenAiPosition = ref({ x: 16, y: 64 })
 const fullscreenAiPanel = ref<HTMLDivElement | null>(null)
+const { t } = useI18n()
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabId.value))
 const wordCount = computed(() => {
   const content = activeTab.value?.content.trim()
@@ -148,14 +151,13 @@ function toggleTheme(): void {
   useSettingsStore.getState().updateAppearanceSettings({ themeId: themeId.value === 'dark' ? lastLightThemeId.value : 'dark' })
 }
 
-function handleWindowAction(action: 'minimize' | 'maximize' | 'close'): void {
-  if (!isTauri()) return
-  void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
-    const currentWindow = getCurrentWindow()
-    if (action === 'minimize') await currentWindow.minimize()
-    if (action === 'maximize') await currentWindow.toggleMaximize()
-    if (action === 'close') await currentWindow.close()
-  }).catch((error) => console.error(`Window ${action} failed:`, error))
+async function openWorkspaceFolder(): Promise<void> {
+  if (!isTauri()) { toast.error(t('common.unavailableInBrowser')); return }
+  try {
+    const path = await pickDirectory()
+    if (!path) return
+    if (!useAppStore.getState().addWorkspaceRoot(path)) toast.error(t('sidebar.workspaceAlreadyOpen'))
+  } catch (error) { console.error('Open folder failed:', error); toast.error(describeFileOperationError(error, t('sidebar.openFolder'))) }
 }
 
 function openSearch(): void {
@@ -348,9 +350,7 @@ onMounted(() => {
   if (isTauri()) {
     void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
       const currentWindow = getCurrentWindow()
-      void currentWindow.isMaximized().then((value) => { maximized.value = value })
       void currentWindow.onResized(() => {
-        void currentWindow.isMaximized().then((value) => { maximized.value = value })
         void currentWindow.isFullscreen().then((value) => {
           useAppStore.getState().setFullscreen(value)
           if (!value && shouldRestoreMaximizedAfterFullscreen) {
@@ -388,19 +388,22 @@ onBeforeUnmount(() => {
       :can-undo="canUndo"
       :can-redo="canRedo"
       :is-fullscreen="isFullscreen"
-      :is-maximized="maximized"
       :is-tauri="isTauri()"
       :is-dark="themeId === 'dark'"
+      :sidebar-collapsed="sidebarCollapsed"
+      :on-toggle-sidebar="() => useAppStore.getState().toggleSidebar()"
+      :on-new-file="handleNewFile"
+      :on-open-file="() => void runAfterNormalLayout(handleOpenFile)"
+      :on-open-folder="() => void openWorkspaceFolder()"
+      :on-open-search="openSearch"
+      :on-open-settings="openSettings"
       :on-undo="() => runHistoryAction('undo')"
       :on-redo="() => runHistoryAction('redo')"
       :on-toggle-theme="toggleTheme"
       :on-toggle-fullscreen="toggleFullscreen"
-      :on-minimize="() => handleWindowAction('minimize')"
-      :on-toggle-maximize="() => handleWindowAction('maximize')"
-      :on-close="() => handleWindowAction('close')"
     />
     <div class="gm-vue-app-layout__main">
-      <VueSidebar v-if="!isFullscreen" :collapsed="sidebarCollapsed" :width="sidebarWidth" :on-resize-start="sidebarResizeStart" :on-open-settings="openSettings" :on-open-search="openSearch" />
+      <VueSidebar v-if="!isFullscreen && !sidebarCollapsed" :width="sidebarWidth" :on-resize-start="sidebarResizeStart" />
       <main class="gm-vue-app-layout__editor"><VueEditorArea /></main>
       <aside v-if="!isFullscreen && aiPanelOpen" class="gm-vue-app-layout__ai" :style="{ width: `${aiPanelWidth}px` }">
         <div class="gm-vue-app-layout__resize" @mousedown="aiResizeStart"></div>
@@ -412,7 +415,7 @@ onBeforeUnmount(() => {
     <div v-if="isFullscreen && aiPanelOpen" ref="fullscreenAiPanel" class="gm-vue-app-layout__fullscreen-ai" :style="{ left: `${fullscreenAiPosition.x}px`, top: `${fullscreenAiPosition.y}px`, width: `${getFullscreenAiSize().width}px`, height: `${getFullscreenAiSize().height}px` }"><VueAiPanel v-bind="fullscreenAiProps" /></div>
     <VueStatusBar v-if="!isFullscreen" :file-path="activeTab?.filePath ?? null" :file-title="activeTab?.title ?? null" :modified="Boolean(activeTab?.modified)" :word-count="wordCount" :ai-status="aiStatus" :ai-status-label="statusLabels[aiStatus]" :on-toggle-assistant="() => useAppStore.getState().toggleAiPanel()" />
     <VueCommandPalette :open="commandPaletteOpen" :mode="commandPaletteMode" :on-close="() => commandPaletteOpen = false" />
-    <Dialog v-model:visible="settingsOpen" modal :dismissable-mask="true" :draggable="false" :style="{ width: '860px', maxWidth: 'calc(100vw - 32px)' }" :content-style="{ height: '560px', padding: '10px 14px', overflow: 'hidden' }" @hide="settingsSection = null"><VueSettingsPage :initial-section="settingsSection" /></Dialog>
+    <Dialog v-model:visible="settingsOpen" modal :dismissable-mask="true" :draggable="false" :header="t('settings.title')" :style="{ width: '860px', maxWidth: 'calc(100vw - 32px)' }" :content-style="{ height: '560px', padding: '6px 14px 10px', overflow: 'hidden' }" @hide="settingsSection = null"><VueSettingsPage :initial-section="settingsSection" /></Dialog>
     <VueFeatureIntroModal :open="featureIntroOpen" :features="featureIntroFeatures" @close="featureIntroOpen = false" />
     <VueProductTourOverlay :open="productTourOpen" :step-index="productTourStep" @step-change="productTourStep = $event" @close="finishProductTour" />
   </div>

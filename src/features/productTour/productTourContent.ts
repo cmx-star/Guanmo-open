@@ -17,14 +17,14 @@ export const PRODUCT_TOUR_STEPS: ProductTourStep[] = [
     ],
     title: '打开文件 / 文件夹',
     content: '点击这里打开文件或文件夹。\n你也可以直接拖入 Markdown 文件，或将观墨设为默认 .md 应用后双击打开。',
-    placement: 'right',
+    placement: 'bottom',
   },
   {
     id: 'sidebar',
     target: '[data-product-tour="sidebar-toggle"]',
     title: '文件侧边栏',
-    content: '点击打开文件侧边栏。\n在这里可以更方便地浏览和管理文件。',
-    placement: 'right',
+    content: '点击打开或收起文件侧边栏。\n在这里可以更方便地浏览和管理文件。',
+    placement: 'bottom',
   },
   {
     id: 'mode-switcher',
@@ -59,7 +59,7 @@ export const PRODUCT_TOUR_STEPS: ProductTourStep[] = [
     target: '[data-product-tour="settings"]',
     title: '设置',
     content: '更多功能和个性化选项，可在设置中查看。',
-    placement: 'right',
+    placement: 'bottom',
   },
 ]
 

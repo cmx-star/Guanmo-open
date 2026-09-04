@@ -19,12 +19,12 @@
   --gmss-placeholder-strong: rgba(72, 62, 44, 0.12);
 }
 :root[data-theme-id='dark'] {
-  --gmss-canvas: #15130f;
-  --gmss-surface: #1d1a15;
-  --gmss-border: #2d271f;
-  --gmss-text: #eee4d2;
-  --gmss-placeholder: rgba(224, 190, 132, 0.1);
-  --gmss-placeholder-strong: rgba(224, 190, 132, 0.16);
+  --gmss-canvas: #262624;
+  --gmss-surface: #2e2e2c;
+  --gmss-border: rgba(244, 244, 240, 0.1);
+  --gmss-text: #f2f2f0;
+  --gmss-placeholder: rgba(244, 244, 240, 0.07);
+  --gmss-placeholder-strong: rgba(244, 244, 240, 0.13);
 }
 :root[data-theme-id='paper'] {
   --gmss-canvas: #f1eadc;

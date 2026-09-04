@@ -126,11 +126,11 @@
 }
 
 .gm-theme-card[data-preview-theme='dark'] {
-  --gm-preview-canvas: #15130f;
-  --gm-preview-surface: #252017;
-  --gm-preview-text: #eee4d2;
+  --gm-preview-canvas: #262624;
+  --gm-preview-surface: #373734;
+  --gm-preview-text: #f2f2f0;
   --gm-preview-primary: #58b8ae;
-  --gm-preview-border: #514532;
+  --gm-preview-border: rgba(244, 244, 240, 0.22);
 }
 
 .gm-theme-card[data-preview-theme='paper'] {

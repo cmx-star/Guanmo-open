@@ -153,14 +153,8 @@ body {
   --gm-fullscreen-control-muted: #4b5563;
 }
 
-[data-theme='dark'] {
-  --gm-fullscreen-control-bg: rgba(29, 26, 21, 0.9);
-  --gm-fullscreen-control-border: rgba(224, 190, 132, 0.18);
-  --gm-fullscreen-control-shadow: 0 18px 46px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --gm-fullscreen-control-hover: rgba(88, 184, 174, 0.14);
-  --gm-fullscreen-control-text: #eee4d2;
-  --gm-fullscreen-control-muted: #b7aa94;
-}
+/* 深色的全屏控制条 token 统一在 tokens/dark.css 定义（选择器 :root[data-theme-id='ink-dark']
+   优先级更高），这里不再重复赋值，避免两处漂移。 */
 
 .gm-ai-empty-icon-shell,
 .gm-ai-avatar {
@@ -1228,6 +1222,30 @@ body {
 /* 浅色(plain)主题下拉框阴影弱化 */
 :root[data-theme-id='light'] .gm-settings-tabs .gm-setting-control [class*="dropdown"] {
   box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+}
+
+/* 设置 Dialog：PrimeVue 主题样式是运行时注入的、晚于本文件加载，
+   单类选择器会被同优先级的组件样式按顺序反超，因此统一用
+   .p-dialog-mask 后代选择器抬高优先级。 */
+.p-dialog-mask .p-dialog {
+  border-color: transparent;
+}
+
+.p-dialog-mask .p-dialog-header {
+  padding: 10px 16px 4px;
+}
+
+/* 关闭钮必须带 .p-button 凑满 (0,3,0)：PrimeVue 的
+   .p-button-icon-only.p-button-rounded 会把 height 锁在 2.5rem，
+   同为 (0,2,0) 且注入更晚，会反超同级的 height 声明（宽 28 高 40 的竖椭圆）。 */
+.p-dialog-mask .p-dialog-close-button.p-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.p-dialog-mask .p-dialog-close-button:focus-visible {
+  outline: none;
 }
 
 .gm-settings-mask {

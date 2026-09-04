@@ -1,17 +1,21 @@
-/* === 观墨 Deep Dark Theme === */
+/* === 观墨 Deep Dark Theme ===
+   暖炭色系：对标 design/claude-dark.css 的 warm charcoal 模型——
+   底色近乎中性、只留一丝暖意，不再整体偏黄棕；
+   边框用文字色 alpha 发丝线（自适应底色），暗色阴影改纯黑深影。 */
 [data-theme='dark'],
 :root[data-theme-id='ink-dark'] {
   /* Canvas & Surfaces (4-step ladder) */
-  --gm-canvas: #15130f;
-  --gm-surface: #1d1a15;
-  --gm-surface-elevated: #252017;
-  --gm-surface-overlay: #30291e;
-  --gm-surface-hover: rgba(224, 190, 132, 0.1);
+  --gm-canvas: #262624;
+  --gm-surface: #2e2e2c;
+  --gm-surface-elevated: #373734;
+  --gm-surface-overlay: #3f3f3c;
+  --gm-surface-hover: rgba(244, 244, 240, 0.06);
 
-  /* Borders (hairline system) */
-  --gm-border: #3b3327;
-  --gm-border-subtle: #2d271f;
-  --gm-border-strong: #514532;
+  /* Borders (hairline system, alpha on text base) */
+  --gm-border: rgba(244, 244, 240, 0.12);
+  --gm-border-subtle: rgba(244, 244, 240, 0.07);
+  --gm-border-strong: rgba(244, 244, 240, 0.22);
+  --gm-border-hover: rgba(244, 244, 240, 0.3);
   --gm-border-focus: #58b8ae;
 
   /* Brand Primary */
@@ -24,12 +28,12 @@
   --gm-accent: #e0be84;
   --gm-accent-subtle: rgba(224, 190, 132, 0.14);
 
-  /* Text Hierarchy */
-  --gm-text: #eee4d2;
-  --gm-text-secondary: #b7aa94;
-  --gm-text-tertiary: #887b66;
-  --gm-text-disabled: #625746;
-  --gm-text-on-primary: #10211f;
+  /* Text Hierarchy — 中性微暖，去掉奶油黄 */
+  --gm-text: #f2f2f0;
+  --gm-text-secondary: #b6b5b1;
+  --gm-text-tertiary: #8b8a85;
+  --gm-text-disabled: #6a6965;
+  --gm-text-on-primary: #10221f;
 
   /* User Message Bubble (柔和低饱和) */
   --gm-user-bubble-bg: #2b3b46;
@@ -45,27 +49,49 @@
   --gm-info: #8fb7d8;
 
   /* Editor Specific */
-  --gm-editor-bg: #17140f;
-  --gm-editor-gutter: #1d1a15;
-  --gm-editor-line-highlight: rgba(88, 184, 174, 0.07);
-  --gm-editor-selection: rgba(88, 184, 174, 0.2);
-  --gm-editor-heading: #f2d9a8;
+  --gm-editor-bg: #2e2e2c;
+  --gm-editor-gutter: #282826;
+  --gm-editor-line-highlight: rgba(88, 184, 174, 0.06);
+  --gm-editor-selection: rgba(88, 184, 174, 0.22);
+  --gm-editor-heading: #f2f2ef;
   --gm-editor-quote: #70d7c7;
   --gm-editor-code: #e0be84;
   --gm-editor-link: #72c8bf;
   --gm-editor-list: #d8a95c;
-  --gm-markdown-heading: #f2d9a8;
+  --gm-markdown-heading: #f2f2ef;
   --gm-markdown-quote-bg: rgba(88, 184, 174, 0.1);
-  --gm-code-bg: #211d16;
-  --gm-code-text: #eee4d2;
-  --gm-code-muted: #9c8f79;
+  --gm-code-bg: #272725;
+  --gm-code-text: #f2f2f0;
+  --gm-code-muted: #9b9a95;
   --gm-code-command: #72c8bf;
   --gm-code-path: #f0c987;
   --gm-code-error: #ff9a91;
   --gm-code-info: #a8c7e6;
 
-  /* Scrollbar */
+  /* Overlay surfaces: tooltip / settings dialog / fullscreen control bar.
+     必须与浅色主题同名单独赋值，否则深色下回落到 light.css :root 的暖白。 */
+  --gm-tooltip-bg: #3f3f3c;
+  --gm-tooltip-border: rgba(244, 244, 240, 0.18);
+  --gm-tooltip-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+
+  --gm-settings-mask-bg: rgba(10, 10, 9, 0.72);
+  --gm-settings-modal-bg: #2e2e2c;
+  --gm-settings-modal-border: rgba(244, 244, 240, 0.2);
+  --gm-settings-modal-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+
+  --gm-fullscreen-control-bg: rgba(38, 38, 36, 0.92);
+  --gm-fullscreen-control-border: rgba(244, 244, 240, 0.18);
+  --gm-fullscreen-control-shadow: 0 18px 44px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(242, 242, 240, 0.06);
+  --gm-fullscreen-control-hover: rgba(88, 184, 174, 0.12);
+  --gm-fullscreen-control-text: #f2f2f0;
+  --gm-fullscreen-control-muted: #b6b5b1;
+
+  /* Shadows — 纯黑深影；浅色的冷蓝影在炭底上不可见 */
+  --gm-shadow-sm: 0 1px 2px rgb(0 0 0 / 32%);
+  --gm-shadow-md: 0 8px 24px rgb(0 0 0 / 40%);
+
+  /* Scrollbar — 文本色 alpha（对齐 claude-dark 24%/46% 模型） */
   --gm-scrollbar-track: transparent;
-  --gm-scrollbar-thumb: #514532;
-  --gm-scrollbar-thumb-hover: #6a5a40;
+  --gm-scrollbar-thumb: rgba(244, 244, 240, 0.2);
+  --gm-scrollbar-thumb-hover: rgba(244, 244, 240, 0.38);
 }

@@ -43,7 +43,7 @@ describe('冷启动主题', () => {
   it.each([
     ['warm', '#f8f4e8', 'light'],
     ['light', '#f4f0e6', 'light'],
-    ['dark', '#15130f', 'dark'],
+    ['dark', '#262624', 'dark'],
     ['paper', '#f1eadc', 'light'],
     ['github-light', '#f5f7f9', 'light'],
   ])('在首个模块执行前恢复 %s 主题', (themeId, canvas, colorScheme) => {
