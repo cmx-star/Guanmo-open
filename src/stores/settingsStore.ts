@@ -112,8 +112,8 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   customCursorEnabled: false,
   aiMascotAvatarEnabled: false,
-  themeId: 'warm',
-  lastLightThemeId: 'warm',
+  themeId: 'dark',
+  lastLightThemeId: 'light',
 }
 
 const DEFAULT_WEB_SEARCH: WebSearchConfig = {
@@ -139,8 +139,12 @@ export function resolveThemeId(appearance: unknown): ThemeId {
     return saved.themeId as ThemeId
   }
   if (saved.theme === 'dark') return 'dark'
-  if (saved.theme === 'light' && saved.lightPalette === 'plain') return 'light'
-  return 'warm'
+  if (saved.theme === 'light') {
+    // 旧格式：lightPalette 决定暖色 warm 还是 plain light
+    return saved.lightPalette === 'plain' ? 'light' : 'warm'
+  }
+  // 非法 themeId 或缺少主题信息 → 回退默认（深色）
+  return DEFAULT_APPEARANCE_SETTINGS.themeId
 }
 
 export function resolveLastLightThemeId(appearance: unknown): NonDarkThemeId {
@@ -155,7 +159,7 @@ export function resolveLastLightThemeId(appearance: unknown): NonDarkThemeId {
   }
   const themeId = resolveThemeId(saved)
   if (themeId !== 'dark') return themeId
-  return saved.lightPalette === 'plain' ? 'light' : 'warm'
+  return saved.lightPalette === 'plain' ? 'light' : DEFAULT_APPEARANCE_SETTINGS.lastLightThemeId
 }
 
 export function syncDocumentTheme(themeId: ThemeId) {

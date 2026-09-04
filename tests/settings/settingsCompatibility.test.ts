@@ -25,7 +25,7 @@ describe('设置兼容', () => {
     const state = store.getState()
 
     expect(state.editor).toMatchObject({ fontSize: 14, lineHeight: 1.65, autoSave: true, modePerformancePolicy: 'balanced', inlinePreviewEdit: true })
-    expect(state.appearance).toMatchObject({ themeId: 'warm', lastLightThemeId: 'warm' })
+    expect(state.appearance).toMatchObject({ themeId: 'dark', lastLightThemeId: 'light' })
     expect(state.webSearch).toMatchObject({ provider: 'duckduckgo', maxResults: 5, timeout: 60000 })
     expect(state.ai.timeout).toBe(60000)
     expect(state.ai.maxContextLength).toBe(8192)
@@ -49,7 +49,7 @@ describe('设置兼容', () => {
     const state = store.getState()
 
     expect(state.editor).toMatchObject({ fontSize: 18, lineHeight: 1.65, fullscreenContentPadding: 88, inlinePreviewEdit: true })
-    expect(state.appearance).toMatchObject({ themeId: 'dark', lastLightThemeId: 'warm', aiMascotAvatarEnabled: false })
+    expect(state.appearance).toMatchObject({ themeId: 'dark', lastLightThemeId: 'light', aiMascotAvatarEnabled: false })
   })
 
   it('将旧主题组合迁移为统一主题 ID', async () => {
@@ -68,7 +68,7 @@ describe('设置兼容', () => {
     expect(paperStore.getState().appearance).toMatchObject({ themeId: 'paper', lastLightThemeId: 'paper' })
 
     const fallbackStore = await loadSettingsStore({ appearance: { themeId: 'unknown' } })
-    expect(fallbackStore.getState().appearance).toMatchObject({ themeId: 'warm', lastLightThemeId: 'warm' })
+    expect(fallbackStore.getState().appearance).toMatchObject({ themeId: 'dark', lastLightThemeId: 'light' })
   })
 
   it('切换主题时立即同步文档属性并记住非深色主题', async () => {
@@ -137,7 +137,7 @@ describe('设置兼容', () => {
     const store = await loadSettingsStore(undefined, '{not-valid-json')
 
     expect(store.getState().editor.fontSize).toBe(14)
-    expect(store.getState().appearance.themeId).toBe('warm')
+    expect(store.getState().appearance.themeId).toBe('dark')
   })
 
   it('旧配置缺少 knowledge 字段时默认 autoIndexEnabled=true', async () => {

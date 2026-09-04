@@ -21,7 +21,7 @@ export function applyDocumentTheme(themeId: ThemeId, root: HTMLElement = documen
 }
 
 export function resolvePersistedTheme(storage: Storage | null = typeof localStorage === 'undefined' ? null : localStorage): ThemeId {
-  if (!storage) return 'ink-light'
+  if (!storage) return 'ink-dark'
 
   try {
     const persisted = JSON.parse(storage.getItem('guanmo-settings') ?? 'null') as {
@@ -30,8 +30,9 @@ export function resolvePersistedTheme(storage: Storage | null = typeof localStor
     const appearance = persisted?.state?.appearance
     if (appearance) return normalizeThemeId(appearance.themeId ?? appearance.theme)
 
-    return normalizeThemeId(storage.getItem('guanmo-web-theme'))
+    const webTheme = storage.getItem('guanmo-web-theme')
+    return webTheme ? normalizeThemeId(webTheme) : 'ink-dark'
   } catch {
-    return 'ink-light'
+    return 'ink-dark'
   }
 }

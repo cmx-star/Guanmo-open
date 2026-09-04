@@ -11,12 +11,12 @@
   --gmss-placeholder-strong: rgba(121, 79, 39, 0.12);
 }
 :root[data-theme-id='light'] {
-  --gmss-canvas: #ffffff;
-  --gmss-surface: #ffffff;
-  --gmss-border: #f1f3f5;
-  --gmss-text: #1f2937;
-  --gmss-placeholder: rgba(31, 41, 55, 0.06);
-  --gmss-placeholder-strong: rgba(31, 41, 55, 0.1);
+  --gmss-canvas: #f4f0e6;
+  --gmss-surface: #fbf8f0;
+  --gmss-border: #ddd5c3;
+  --gmss-text: #2a2821;
+  --gmss-placeholder: rgba(72, 62, 44, 0.08);
+  --gmss-placeholder-strong: rgba(72, 62, 44, 0.12);
 }
 :root[data-theme-id='dark'] {
   --gmss-canvas: #15130f;

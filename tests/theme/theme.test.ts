@@ -19,6 +19,12 @@ describe('theme compatibility', () => {
     expect(resolvePersistedTheme(mockStorage)).toBe('ink-dark')
   })
 
+  it('defaults to dark when nothing is persisted', () => {
+    const emptyStorage = { getItem: () => null } as Storage
+    expect(resolvePersistedTheme(emptyStorage)).toBe('ink-dark')
+    expect(resolvePersistedTheme(null)).toBe('ink-dark')
+  })
+
   it('writes only the fixed theme id and mode to the document', () => {
     const root = document.createElement('html')
     applyDocumentTheme('ink-light', root)

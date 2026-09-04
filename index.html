@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light" data-theme-id="warm">
+<html lang="zh-CN" data-theme="dark" data-theme-id="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,7 +8,7 @@
       performance.mark('guanmo:startup:html-start');performance.mark('guanmo:startup:frontend-bootstrap');
       (() => {
         const themeIds = ['warm', 'light', 'dark', 'paper', 'github-light']
-        let themeId = 'warm'
+        let themeId = 'dark'
         let hasPersistedTheme = false
         try {
           const persisted = JSON.parse(localStorage.getItem('guanmo-settings') || 'null')
@@ -31,7 +31,7 @@
             const webTheme = localStorage.getItem('guanmo-web-theme')
             if (webTheme === 'dark' || webTheme === 'light') themeId = webTheme
           } catch (_) {
-            // localStorage 不可用时保留默认暖色主题。
+            // localStorage 不可用时保留默认深色主题。
           }
         }
         const root = document.documentElement
@@ -45,7 +45,7 @@
          样式改由 main.ts import（打进入口 CSS，<link> 加载，'self' 放行）；
          body 回退色与原生窗口 backgroundColor 一同兜底首屏底色。 -->
   </head>
-  <body style="margin:0;background:var(--gmss-canvas, #f8f4e8);color:var(--gmss-text, #794f27);">
+  <body style="margin:0;background:var(--gmss-canvas, #15130f);color:var(--gmss-text, #eee4d2);">
     <div id="root"></div>
     <div id="guanmo-startup-shell" aria-hidden="true">
       <div class="gmss-title"><span class="gmss-brand">观墨</span></div>

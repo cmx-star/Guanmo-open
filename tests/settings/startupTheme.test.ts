@@ -42,7 +42,7 @@ function startupCanvas(themeId: string): string | undefined {
 describe('冷启动主题', () => {
   it.each([
     ['warm', '#f8f4e8', 'light'],
-    ['light', '#ffffff', 'light'],
+    ['light', '#f4f0e6', 'light'],
     ['dark', '#15130f', 'dark'],
     ['paper', '#f1eadc', 'light'],
     ['github-light', '#f5f7f9', 'light'],
